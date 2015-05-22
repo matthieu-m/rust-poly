@@ -5,7 +5,7 @@ use rtti;
 use rtti::{Class,DynClass};
 use rtti::{DownCastRef,UpCast};
 
-// KLUDGE:
+//  KLUDGE: should be automatically implemented
 use rtti::{DerivedFromTrait,DerivedFromStruct,FirstDerivedFromTrait,FirstDerivedFromStruct};
 
 use std::boxed::Box;
@@ -115,7 +115,8 @@ pub fn doit() {
         Box::new(Class::new(hve)).into()
     };
 
-    process_any_element((*video_element).as_trait());
+    //  FIXME: cannot implement as_trait() generically
+    //process_any_element((*video_element).as_trait());
 
     let node = video_element.as_struct()._first_parent._first_parent.first_child.as_ref().unwrap();
 

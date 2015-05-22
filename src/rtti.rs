@@ -349,6 +349,10 @@ impl UntypedVRef {
         self.vtable.struct_info
     }
 
+    pub fn get_trait_info(&self) -> &'static TraitInfo {
+        self.vtable.trait_info
+    }
+
     pub fn up_cast<T: ?Sized, B: ?Sized>(&self) -> UntypedVRef
         where B: marker::Reflect + 'static,
               T: DerivedFromTrait<B> + marker::Reflect + 'static
@@ -380,11 +384,15 @@ impl<T: ?Sized> VRef<T>
     }
 
     pub fn get_vtable(&self) -> &'static VTable {
-        self.untyped.vtable
+        self.untyped.get_vtable()
     }
 
     pub fn get_struct_info(&self) -> &'static StructInfo {
-        self.untyped.vtable.struct_info
+        self.untyped.get_struct_info()
+    }
+
+    pub fn get_trait_info(&self) -> &'static TraitInfo {
+        self.untyped.get_trait_info()
     }
 
     pub fn up_cast<B: ?Sized>(&self) -> VRef<B>
@@ -493,6 +501,9 @@ impl<T: ?Sized, S> DynClass<T, S>
     where T: marker::Reflect + 'static,
           S: marker::Reflect + 'static,
 {
+/*
+ *  FIXME: error: transmute called on types with different sizes: core::raw::TraitObject (128 bits) to &T (64 bits)
+
     pub fn as_trait(&self) -> &T {
         unsafe {
             mem::transmute(raw::TraitObject {
@@ -510,6 +521,7 @@ impl<T: ?Sized, S> DynClass<T, S>
             })
         }
     }
+*/
 
     pub fn as_struct(&self) -> &S {
         unsafe { mem::transmute(&self.data) }
@@ -546,6 +558,9 @@ impl<T: ?Sized, S> Drop for DynClass<T, S>
     }
 }
 
+/*
+ *  FIXME: find a way to transmute a raw::TraitObject into a &T
+
 impl<T: ?Sized, S> ops::Deref for DynClass<T, S>
     where T: marker::Reflect + 'static,
           S: marker::Reflect + 'static
@@ -561,6 +576,7 @@ impl<T: ?Sized, S> ops::DerefMut for DynClass<T, S>
 {
     fn deref_mut(&mut self) -> &mut T { self.as_trait_mut() }
 } // impl DerefMut
+*/
 
 impl<T: ?Sized, S, B: ?Sized, P> UpCast<Box<DynClass<B, P>>> for Box<DynClass<T, S>>
     where T: DerivedFromTrait<B> + marker::Reflect + 'static,
@@ -608,21 +624,25 @@ impl<T: ?Sized, S, D: ?Sized, C> DownCast<Box<DynClass<D, C>>> for Box<DynClass<
           C: FirstDerivedFromStruct<S> + marker::Reflect + 'static,
 {
     fn down_cast(self) -> Result<Box<DynClass<D, C>>, Box<DynClass<T, S>>> {
+        if !(self.original.get_struct_info().is_first_derived)(struct_id::<C>()) {
+            return Err(self);
+        }
+
         //  Adjust v-ptr, then return
         let mut s = self;
-        let new_table = s.current.cast::<D>();
+        let new_table = s.original.cast::<T, D>();
 
         match new_table {
         None => Err(s),
         Some(v) => { unsafe { s.current = mem::transmute(v); Ok(mem::transmute(s)) } },
         }
     }
-    
+
     unsafe fn unchecked_down_cast(self) -> Box<DynClass<D, C>> {
         //  Adjust v-ptr, then return
         let mut s = self;
 
-        s.current = mem::transmute(s.current.cast::<D>().unwrap());
+        s.current = mem::transmute(s.original.cast::<T, D>().unwrap());
         mem::transmute(s)
     }
 }
@@ -634,6 +654,10 @@ impl<T: ?Sized, S, D: ?Sized, C> DownCastRef<DynClass<D, C>> for DynClass<T, S>
           C: FirstDerivedFromStruct<S> + marker::Reflect + 'static,
 {
     fn down_cast_ref(&self) -> Option<&DynClass<D, C>> {
+        if !(self.current.get_struct_info().is_first_derived)(struct_id::<C>()) {
+            return None;
+        }
+
         let vt = self.current.cast::<D>();
         vt.map(|_| {
             unsafe { mem::transmute(self) }
@@ -652,6 +676,10 @@ impl<T: ?Sized, S, D: ?Sized, C> DownCastRefMut<DynClass<D, C>> for DynClass<T, 
           C: FirstDerivedFromStruct<S> + marker::Reflect + 'static
 {
     fn down_cast_ref_mut(&mut self) -> Option<&mut DynClass<D, C>> {
+        if !(self.current.get_struct_info().is_first_derived)(struct_id::<C>()) {
+            return None;
+        }
+
         let vt = self.current.cast::<D>();
         match vt {
         Some(_) => unsafe { mem::transmute(self) },
