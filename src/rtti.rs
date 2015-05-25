@@ -28,6 +28,7 @@ macro_rules! offset_of(
             let exemplar: $T = std::mem::uninitialized();
             let base: *const u8 = std::mem::transmute(&exemplar);
             let attr: *const u8 = std::mem::transmute(&exemplar.$field);
+            mem::forget(exemplar);
             (attr as isize) - (base as isize)
         }
     }

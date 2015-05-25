@@ -123,9 +123,9 @@ pub fn doit() {
     let node = video_element.as_struct()._first_parent._first_parent.first_child.as_ref().unwrap();
 
     if let Some(text) = { let t: Option<&DynClass<Node, TextNode>> = (*node).down_cast_ref(); t } {
-        println!("I got me some {:?}", &text);
+        println!("I got me some text node {:?}", &text);
     } else if let Some(element) = { let t: Option<&DynClass<Element, ElementData>> = (*node).down_cast_ref(); t } {
-        println!("I got me some {:?}", &element);
+        println!("I got me some element {:?}", &element);
     } else {
         println!("Oh shoot, nothing I know!");
     }
