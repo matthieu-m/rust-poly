@@ -97,6 +97,7 @@ impl Element for HTMLVideoElement {
 }
 
 fn process_any_element<'a>(element: &'a Element) {
+    println!("Process an element!");
     element.do_the_thing();
 }
 
@@ -105,6 +106,7 @@ pub fn doit() {
         let nd = NodeData { parent: None, first_child: None };
         Box::new(Class::new(TextNode { _first_parent: nd })).into()
     };
+    println!("text_node built");
 
     let video_element: Box<DynClass<Element, HTMLVideoElement>> = {
         let tn: Box<DynClass<Node, NodeData>> = text_node.up_cast();
@@ -114,9 +116,9 @@ pub fn doit() {
         let hve = HTMLVideoElement { _first_parent: ed, cross_origin: false };
         Box::new(Class::new(hve)).into()
     };
+    println!("video_element built");
 
-    //  FIXME: cannot implement as_trait() generically
-    //process_any_element((*video_element).as_trait());
+    process_any_element((*video_element).as_trait());
 
     let node = video_element.as_struct()._first_parent._first_parent.first_child.as_ref().unwrap();
 
@@ -192,109 +194,98 @@ unsafe impl DerivedFromTrait<Element> for HTMLVideoElement {}
 //
 pub fn register_struct_info(collector: &mut Vec<(rtti::StructId, rtti::StructInfo)>) {
     use core::marker;
-    use rtti::{StructId, StructInfo, struct_id};
+    use core::mem;
+    use core::ptr;
+    use rtti::{StructId, StructInfo, TraitId, VTable, struct_id, v_table_by_id};
 
-    fn insert_struct_info_for<S>(collector: &mut Vec<(StructId, StructInfo)>, is_first_derived: fn (StructId) -> bool)
+    fn make<S>(off: fn (StructId) -> &'static [isize]) -> (StructId, StructInfo)
         where S: marker::Reflect + 'static
     {
-        let struct_info = StructInfo::new::<S>(is_first_derived);
-        collector.push((struct_id::<S>(), struct_info));
+        fn v_table<S>(id: TraitId) -> Option<&'static VTable>
+            where S: marker::Reflect + 'static
+        {
+            v_table_by_id(id, struct_id::<S>())
+        }
+
+        fn drop<S>(raw: &mut ())
+            where S: marker::Reflect + 'static
+        {
+            unsafe {
+                let s: *const S = mem::transmute(raw);
+                ptr::read(s);
+            }
+        }
+
+        (
+            struct_id::<S>(),
+            StructInfo::new::<S>(v_table::<S>, off, drop::<S>)
+        )
+    } // make
+
+    static NO_OFFSET: [isize; 0] = [];
+    static OFFSET_ZERO: [isize; 1] = [0];
+
+    fn offsets_of_node_data(id: StructId) -> &'static [isize] {
+        if id == struct_id::<NodeData>() { &OFFSET_ZERO } else { &NO_OFFSET }
     }
 
-    fn is_first_derived_of_node_data(_: StructId) -> bool { false }
-
-    fn is_first_derived_of_text_node(id: StructId) -> bool { id == struct_id::<NodeData>() }
-
-    fn is_first_derived_of_element_data(id: StructId) -> bool { id == struct_id::<NodeData>() }
-
-    fn is_first_derived_of_html_element(id: StructId) -> bool {
-        id == struct_id::<ElementData>() || is_first_derived_of_element_data(id)
+    fn offsets_of_text_node(id: StructId) -> &'static [isize] {
+        if id == struct_id::<TextNode>() { &OFFSET_ZERO } else { offsets_of_node_data(id) }
     }
 
-    insert_struct_info_for::<NodeData>(collector, is_first_derived_of_node_data);
-    insert_struct_info_for::<TextNode>(collector, is_first_derived_of_text_node);
-    insert_struct_info_for::<ElementData>(collector, is_first_derived_of_element_data);
-    insert_struct_info_for::<HTMLImageElement>(collector, is_first_derived_of_html_element);
-    insert_struct_info_for::<HTMLVideoElement>(collector, is_first_derived_of_html_element);
+    fn offsets_of_element_data(id: StructId) -> &'static [isize] {
+        if id == struct_id::<ElementData>() { &OFFSET_ZERO } else { offsets_of_node_data(id) }
+    }
+
+    fn offsets_of_html_image_element(id: StructId) -> &'static [isize] {
+        if id == struct_id::<HTMLImageElement>() { &OFFSET_ZERO } else { offsets_of_element_data(id) }
+    }
+
+    fn offsets_of_html_video_element(id: StructId) -> &'static [isize] {
+        if id == struct_id::<HTMLVideoElement>() { &OFFSET_ZERO } else { offsets_of_element_data(id) }
+    }
+
+    collector.push(make::<NodeData>(offsets_of_node_data));
+    collector.push(make::<TextNode>(offsets_of_text_node));
+    collector.push(make::<ElementData>(offsets_of_element_data));
+    collector.push(make::<HTMLImageElement>(offsets_of_html_image_element));
+    collector.push(make::<HTMLVideoElement>(offsets_of_html_video_element));
 } // fn register_struct_info
 
 pub fn register_trait_info(collector: &mut Vec<(rtti::TraitId, rtti::TraitInfo)>) {
-    use rtti::{TraitInfo, trait_id};
-    collector.push((trait_id::<Node>(), TraitInfo { trait_id: trait_id::<Node>() }));
-    collector.push((trait_id::<Element>(), TraitInfo { trait_id: trait_id::<Element>() }));
+    use core::marker;
+    use rtti::{StructId, TraitId, TraitInfo, VTable, trait_id, v_table_by_id};
+
+    fn make<T: ?Sized>() -> (TraitId, TraitInfo)
+        where T: marker::Reflect + 'static
+    {
+        fn v_table<T: ?Sized>(id: StructId) -> Option<&'static VTable>
+            where T: marker::Reflect + 'static
+        {
+            v_table_by_id(trait_id::<T>(), id)
+        }
+
+        (
+            trait_id::<T>(),
+            TraitInfo::new::<T>(v_table::<T>)
+        )
+    } // make
+
+    collector.push(make::<Node>());
+    collector.push(make::<Element>());
 } // fn register_trait_info
 
 pub fn register_vtables(collector: &mut Vec<(rtti::TraitId, rtti::StructId, rtti::VTable)>) {
-    use std::mem::{transmute};
-    use rtti::{TraitId, VTable, get_vtable_by_id, struct_id, trait_id};
+    collector.push(make_vtable_entry!(Node, NodeData));
+    collector.push(make_vtable_entry!(Node, TextNode));
 
-    fn generic_drop<T>(raw: &mut ()) {
-        let n: &mut T = unsafe { transmute(raw) };
-        drop(n);
-    }
+    collector.push(make_vtable_entry!(Node, ElementData));
+    collector.push(make_vtable_entry!(Element, ElementData));
 
-    fn cast_node_impl_node_data(t: TraitId) -> Option<&'static VTable> {
-        if t == trait_id::<Node>() { Some(get_vtable_by_id(t, struct_id::<NodeData>())) }
-        else                       { None }
-    }
+    collector.push(make_vtable_entry!(Node, HTMLImageElement));
+    collector.push(make_vtable_entry!(Element, HTMLImageElement));
 
-    fn cast_node_impl_text_node(t: TraitId) -> Option<&'static VTable> {
-        if t == trait_id::<Node>() { Some(get_vtable_by_id(t, struct_id::<TextNode>())) }
-        else                       { None }
-    }
-
-    fn cast_node_impl_element_data(t: TraitId) -> Option<&'static VTable> {
-        if t == trait_id::<Node>() || t == trait_id::<Element>() {
-            Some(get_vtable_by_id(t, struct_id::<ElementData>()))
-        } else {
-            None
-        }
-    }
-    
-    fn cast_element_impl_element_data(t: TraitId) -> Option<&'static VTable> {
-        cast_node_impl_element_data(t)
-    }
-
-    fn cast_node_impl_html_image_element(t: TraitId) -> Option<&'static VTable> {
-        if t == trait_id::<Node>() || t == trait_id::<Element>() {
-            Some(get_vtable_by_id(t, struct_id::<HTMLImageElement>()))
-        } else {
-            None
-        }
-    }
-
-    fn cast_element_impl_html_image_element(t: TraitId) -> Option<&'static VTable> {
-        cast_node_impl_html_image_element(t)
-    }
-
-    fn cast_node_impl_html_video_element(t: TraitId) -> Option<&'static VTable> {
-        if t == trait_id::<Node>() || t == trait_id::<Element>() {
-            Some(get_vtable_by_id(t, struct_id::<HTMLVideoElement>()))
-        } else {
-            None
-        }
-    }
-
-    fn cast_element_impl_html_video_element(t: TraitId) -> Option<&'static VTable> {
-        cast_node_impl_html_video_element(t)
-    }
-
-    let drop_node_data = generic_drop::<NodeData>;
-    let drop_text_node = generic_drop::<TextNode>;
-    let drop_element_data = generic_drop::<ElementData>;
-    let drop_html_image_element = generic_drop::<HTMLImageElement>;
-    let drop_html_video_element = generic_drop::<HTMLVideoElement>;
-
-    collector.push(make_vtable_entry!(Node, NodeData, drop_node_data, cast_node_impl_node_data));
-    collector.push(make_vtable_entry!(Node, TextNode, drop_text_node, cast_node_impl_text_node));
-
-    collector.push(make_vtable_entry!(Node, ElementData, drop_element_data, cast_node_impl_element_data));
-    collector.push(make_vtable_entry!(Element, ElementData, drop_element_data, cast_element_impl_element_data));
-
-    collector.push(make_vtable_entry!(Node, HTMLImageElement, drop_html_image_element, cast_node_impl_html_image_element));
-    collector.push(make_vtable_entry!(Element, HTMLImageElement, drop_html_image_element, cast_element_impl_html_image_element));
-
-    collector.push(make_vtable_entry!(Node, HTMLVideoElement, drop_html_video_element, cast_node_impl_html_video_element));
-    collector.push(make_vtable_entry!(Element, HTMLVideoElement, drop_html_video_element, cast_element_impl_html_video_element));
+    collector.push(make_vtable_entry!(Node, HTMLVideoElement));
+    collector.push(make_vtable_entry!(Element, HTMLVideoElement));
 } // fn register_vtables
 

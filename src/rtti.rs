@@ -18,6 +18,22 @@ use core::raw;
 use std;
 
 //
+//  Helpers
+//
+//  Humpf, "offsetof" is a reserved identifier but does not do anything :(
+#[macro_export]
+macro_rules! offset_of(
+    ($T:ty, $field:ident) => {
+        unsafe {
+            let exemplar: $T = std::mem::uninitialized();
+            let base: *const u8 = std::mem::transmute(&exemplar);
+            let attr: *const u8 = std::mem::transmute(&exemplar.$field);
+            (attr as isize) - (base as isize)
+        }
+    }
+);
+
+//
 //  "Manual" intrinsics
 //
 //  Some functionality require data set-up for us by the compiler.
@@ -58,18 +74,14 @@ macro_rules! make_vptr(
 // KLUDGE
 #[macro_export]
 macro_rules! make_vtable_entry(
-    ($T:ty, $S:ty, $drop:ident, $cast:ident) => (
+    ($T:ty, $S:ty) => (
         {
             (
                 $crate::rtti::trait_id::<$T>(),
                 $crate::rtti::struct_id::<$S>(),
-                $crate::rtti::VTable {
-                    struct_info: $crate::rtti::get_struct_info::<$S>(),
-                    trait_info: $crate::rtti::get_trait_info::<$T>(),
-                    drop: $drop,
-                    cast: $cast,
-                    table: make_vptr!($T, $S),
-                }
+                $crate::rtti::VTable::new::<$T, $S>(
+                    make_vptr!($T, $S)
+                )
             )
         }
     )
@@ -128,19 +140,19 @@ pub fn init_vtable_registry(registry: Vec<(TraitId, StructId, VTable)>) {
     }
 }
 
-pub fn get_struct_info<Struct>() -> &'static StructInfo
+pub fn struct_info<Struct>() -> &'static StructInfo
     where Struct: marker::Reflect + 'static
 {
     let struct_id = struct_id::<Struct>();
-    get_struct_info_by_id(struct_id)
+    struct_info_by_id(struct_id)
 }
 
-pub fn get_struct_info_by_id(struct_id: StructId) -> &'static StructInfo {
+pub fn struct_info_by_id(struct_id: StructId) -> &'static StructInfo {
     unsafe {
         // This function is supposed to be an intrinsic substituted by the compiler,
         // so I won't be thinking too hard about race conditions...
         if STRUCT_INFO_REGISTRY.is_null() {
-            panic!("Call init_struct_info_registry before the first call to get_struct_info.")
+            panic!("Call init_struct_info_registry before the first call to struct_info.")
         }
 
         for &(s_id, ref struct_info) in &*(*STRUCT_INFO_REGISTRY).inner {
@@ -151,19 +163,19 @@ pub fn get_struct_info_by_id(struct_id: StructId) -> &'static StructInfo {
     }
 }
 
-pub fn get_trait_info<Trait: ?Sized>() -> &'static TraitInfo
+pub fn trait_info<Trait: ?Sized>() -> &'static TraitInfo
     where Trait: marker::Reflect + 'static
 {
     let trait_id = trait_id::<Trait>();
-    get_trait_info_by_id(trait_id)
+    trait_info_by_id(trait_id)
 }
 
-pub fn get_trait_info_by_id(trait_id: TraitId) -> &'static TraitInfo {
+pub fn trait_info_by_id(trait_id: TraitId) -> &'static TraitInfo {
     unsafe {
         // This function is supposed to be an intrinsic substituted by the compiler,
         // so I won't be thinking too hard about race conditions...
         if TRAIT_INFO_REGISTRY.is_null() {
-            panic!("Call init_trait_info_registry before the first call to get_trait_info.")
+            panic!("Call init_trait_info_registry before the first call to trait_info.")
         }
 
         for &(t_id, ref trait_info) in &*(*TRAIT_INFO_REGISTRY).inner {
@@ -174,28 +186,28 @@ pub fn get_trait_info_by_id(trait_id: TraitId) -> &'static TraitInfo {
     }
 }
 
-pub fn get_vtable<Trait: ?Sized, Struct>() -> &'static VTable
+pub fn v_table<Trait: ?Sized, Struct>() -> &'static VTable
     where Trait: marker::Reflect + 'static,
           Struct: DerivedFromTrait<Trait> + marker::Reflect + 'static
 {
     let trait_id = trait_id::<Trait>();
     let struct_id = struct_id::<Struct>();
-    get_vtable_by_id(trait_id, struct_id)
+    v_table_by_id(trait_id, struct_id).unwrap()
 }
 
-pub fn get_vtable_by_id(trait_id: TraitId, struct_id: StructId) -> &'static VTable {
+pub fn v_table_by_id(trait_id: TraitId, struct_id: StructId) -> Option<&'static VTable> {
     unsafe {
         // This function is supposed to be an intrinsic substituted by the compiler,
         // so I won't be thinking too hard about race conditions...
         if VTABLE_REGISTRY.is_null() {
-            panic!("Call init_vtable_registry before the first call to get_vtable.")
+            panic!("Call init_vtable_registry before the first call to v_table.")
         }
 
         for &(t_id, s_id, ref vtable) in &*(*VTABLE_REGISTRY).inner {
-            if t_id == trait_id && s_id == struct_id { return vtable; }
+            if t_id == trait_id && s_id == struct_id { return Some(vtable); }
         }
 
-        panic!("No such vtable registered.");
+        None
     }
 }
 
@@ -212,91 +224,79 @@ pub unsafe trait FirstDerivedFromStruct<T>: DerivedFromStruct<T> {}
 
 
 //
-//  Cast Traits
-//
-pub trait UpCast<Target> {
-    fn up_cast(self) -> Target;
-}
-
-pub trait UpCastRef<Target> {
-    fn up_cast_ref(&self) -> &Target;
-}
-
-pub trait UpCastRefMut<Target>: UpCastRef<Target> {
-    fn up_cast_ref_mut(&mut self) -> &mut Target;
-}
-
-
-pub trait DownCast<Target> {
-    fn down_cast(self) -> Result<Target, Self>;
-
-    unsafe fn unchecked_down_cast(self) -> Target;
-}
-
-pub trait DownCastRef<Target> {
-    fn down_cast_ref(&self) -> Option<&Target>;
-
-    unsafe fn unchecked_down_cast_ref(&self) -> &Target;
-}
-
-pub trait DownCastRefMut<Target>: DownCastRef<Target> {
-    fn down_cast_ref_mut(&mut self) -> Option<&mut Target>;
-
-    unsafe fn unchecked_down_cast_ref_mut(&mut self) -> &mut Target;
-}
-
-
-//
 //  Raw representation of type info data in ROM.
 //
 #[repr(C)]
 pub struct StructInfo {
-    pub size: usize,
-    pub align: usize,
-    pub struct_id: StructId,
-    pub is_first_derived: fn (StructId) -> bool,
+    size_align: u64,        // high 8 bits: log2(align), low 56 bits: size
+    struct_id: StructId,
+    v_table_getter: fn (TraitId) -> Option<&'static VTable>,
+    offsets_getter: fn (StructId) -> &'static [isize],
+    dropper: fn (&mut ()) -> (),
 }
 
 #[repr(C)]
 pub struct TraitInfo {
-    pub trait_id: TraitId,
-    //  FIXME: requires knowing the relative placement of the vtables for a given trait...
-    //  pub cast: fn (TraitId) -> Option<isize>
+    trait_id: TraitId,
+    v_table_getter: fn (StructId) -> Option<&'static VTable>,
 }
 
 #[repr(C)]
 pub struct VTable {
-    pub struct_info: &'static StructInfo,
-    pub trait_info: &'static TraitInfo,
-    pub drop: fn (&mut ()) -> (),
-    pub cast: fn (TraitId) -> Option<&'static VTable>,
-    pub table: *mut (),         // KLUDGE
-}
-
-#[repr(C)]
-#[derive(Copy, Clone, Debug)]
-pub struct UntypedVRef {
-    vtable: &'static VTable,
-}
-
-#[repr(C)]
-pub struct VRef<T: ?Sized>
-    where T: marker::Reflect + 'static
-{
-    untyped: UntypedVRef,
-    _0: marker::PhantomData<*const T>,
+    struct_info: &'static StructInfo,
+    trait_info: &'static TraitInfo,
+    table: *mut (),         // KLUDGE
 }
 
 impl StructInfo {
-    pub fn new<S>(ifd: fn (StructId) -> bool) -> StructInfo
+    const ALIGN_MASK: u64 = 18374686479671623680_u64;
+    const ALIGN_SHIFT: u64 = 56;
+
+    pub fn new<S>(
+        vt: fn (TraitId) -> Option<&'static VTable>,
+        off: fn (StructId) -> &'static [isize],
+        drop: fn (&mut ()) -> ()
+    ) -> StructInfo
         where S: marker::Reflect + 'static
     {
-        StructInfo {
-            size: mem::size_of::<S>(),
-            align: mem::align_of::<S>(),
-            struct_id: struct_id::<S>(),
-            is_first_derived: ifd,
+        fn log2(n: u64) -> u64 {
+            let mut n = n;
+            let mut acc = 0;
+            while n != 1 {
+                assert!(n % 2 == 0, "Only works on powers of 2");
+                n /= 2;
+                acc += 1;
+            }
+            acc
         }
+
+        let size = mem::size_of::<S>() as u64;
+        let align = log2(mem::align_of::<S>() as u64) << StructInfo::ALIGN_SHIFT;
+        StructInfo {
+            size_align: size | align,
+            struct_id: struct_id::<S>(),
+            v_table_getter: vt,
+            offsets_getter: off,
+            dropper: drop,
+        }
+    }
+
+    pub fn size(&self) -> usize { (self.size_align & !StructInfo::ALIGN_MASK) as usize }
+
+    pub fn log2_align(&self) -> usize { (self.size_align >> StructInfo::ALIGN_SHIFT) as usize }
+
+    pub fn struct_id(&self) -> StructId { self.struct_id }
+
+    pub fn v_table(&self, id: TraitId) -> Option<&'static VTable> {
+        (self.v_table_getter)(id)
+    }
+
+    pub fn offsets(&self, id: StructId) -> &'static [isize] {
+        (self.offsets_getter)(id)
+    }
+
+    pub fn drop(&self, data: &mut ()) {
+        (self.dropper)(data)
     }
 } // impl StructInfo
 
@@ -305,12 +305,29 @@ impl fmt::Debug for StructInfo {
         write!(
             formatter,
             "StructInfo {{ size: {}, align: {}, struct_id: {:?} }}",
-            self.size,
-            self.align,
+            self.size(),
+            1_u64 << self.log2_align(),
             self.struct_id
         )
     }
-}
+} // impl Debug for StructInfo
+
+impl TraitInfo {
+    pub fn new<T: ?Sized>(vt: fn (StructId) -> Option<&'static VTable>) -> TraitInfo
+        where T: marker::Reflect + 'static
+    {
+        TraitInfo {
+            trait_id: trait_id::<T>(),
+            v_table_getter: vt,
+        }
+    }
+
+    pub fn trait_id(&self) -> TraitId { self.trait_id }
+
+    pub fn v_table(&self, id: StructId) -> Option<&'static VTable> {
+        (self.v_table_getter)(id)
+    }
+} // impl TraitInfo
 
 impl fmt::Debug for TraitInfo {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
@@ -320,7 +337,39 @@ impl fmt::Debug for TraitInfo {
             self.trait_id
         )
     }
-}
+} // impl Debug for TraitInfo
+
+impl VTable {   
+    pub fn new<T: ?Sized, S>(table: *mut ()) -> VTable
+        where T: marker::Reflect + 'static,
+              S: DerivedFromTrait<T> + marker::Reflect + 'static,
+    {
+        VTable {
+            struct_info: struct_info::<S>(),
+            trait_info: trait_info::<T>(),
+            table: table,
+        }
+    }
+
+    pub fn struct_info(&self) -> &'static StructInfo { self.struct_info }
+
+    pub fn trait_info(&self) -> &'static TraitInfo { self.trait_info }
+
+    pub fn table(&self) -> *mut () { self.table }
+
+    pub fn cast_to_trait<T: ?Sized>(&self) -> Option<&'static VTable>
+        where T: marker::Reflect + 'static,
+    {
+        let trait_info = trait_info::<T>();
+        let struct_info = self.struct_info;
+
+        if let Some(vt) = trait_info.v_table(struct_info.struct_id) {
+            Some(vt)
+        } else {
+            struct_info.v_table(trait_info.trait_id)
+        }
+    }
+} // impl VTable
 
 impl fmt::Debug for VTable {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
@@ -331,48 +380,109 @@ impl fmt::Debug for VTable {
             self.trait_info
         )
     }
+} // impl Debug for VTable
+
+
+//
+//  Library
+//
+
+//
+//  Cast Traits
+//
+pub trait UpCast<Target> {
+    fn up_cast(self) -> Target;
+}
+
+pub trait UpCastRef<Target> {
+    fn up_cast_ref(&self) -> &Target;
+    fn up_cast_ref_mut(&mut self) -> &mut Target;
+}
+
+pub trait DownCast<Target> {
+    fn down_cast(self) -> Result<Target, Self>;
+
+    unsafe fn unchecked_down_cast(self) -> Target;
+}
+
+pub trait DownCastRef<Target> {
+    fn down_cast_ref(&self) -> Option<&Target>;
+    fn down_cast_ref_mut(&mut self) -> Option<&mut Target>;
+
+    unsafe fn unchecked_down_cast_ref(&self) -> &Target;
+    unsafe fn unchecked_down_cast_ref_mut(&mut self) -> &mut Target;
+}
+
+//
+//  &T and &mut T
+//
+//  FIXME: once &T and &mut T are wired into VTable, implement UpCastRef/DownCastRef.
+//
+
+//
+//  Bricks
+//
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct UntypedVRef {
+    v_table: &'static VTable,
+}
+
+#[repr(C)]
+pub struct VRef<T: ?Sized>
+    where T: marker::Reflect + 'static
+{
+    untyped: UntypedVRef,
+    _0: marker::PhantomData<*const T>,
 }
 
 impl UntypedVRef {
-    pub fn new<T: ?Sized, S>() -> UntypedVRef
-        where T: marker::Reflect + 'static,
-              S: DerivedFromTrait<T> + marker::Reflect + 'static,
-    {
-        UntypedVRef { vtable: get_vtable::<T, S>() }
+    pub fn new(v_table: &'static VTable) -> UntypedVRef {
+        UntypedVRef { v_table: v_table }
     }
 
-    pub fn get_vtable(&self) -> &'static VTable {
-        self.vtable
+    pub fn v_table(&self) -> &'static VTable { self.v_table }
+
+    pub fn struct_info(&self) -> &'static StructInfo {
+        self.v_table().struct_info
     }
 
-    pub fn get_struct_info(&self) -> &'static StructInfo {
-        self.vtable.struct_info
-    }
-
-    pub fn get_trait_info(&self) -> &'static TraitInfo {
-        self.vtable.trait_info
+    pub fn trait_info(&self) -> &'static TraitInfo {
+        self.v_table().trait_info
     }
 
     pub fn up_cast<T: ?Sized, B: ?Sized>(&self) -> UntypedVRef
         where B: marker::Reflect + 'static,
               T: DerivedFromTrait<B> + marker::Reflect + 'static
     {
-        UntypedVRef { vtable: (self.vtable.cast)(trait_id::<B>()).unwrap() }
+        UntypedVRef::new(self.v_table().cast_to_trait::<B>().unwrap())
     }
 
-    pub fn cast<T: ?Sized, D: ?Sized>(&self) -> Option<UntypedVRef>
+    pub fn down_cast<T: ?Sized, D: ?Sized>(&self) -> Option<UntypedVRef>
         where T: marker::Reflect + 'static,
-              D: marker::Reflect + 'static
+              D: DerivedFromTrait<T> + marker::Reflect + 'static
     {
-        (self.vtable.cast)(trait_id::<D>()).map(|vt| {
-            UntypedVRef { vtable: vt }
+        if trait_id::<T>() == trait_id::<D>() { return Some(*self); }
+
+        self.v_table().cast_to_trait::<D>().map(|vt| {
+            UntypedVRef::new(vt)
         })
     }
 
     pub fn drop(&self, it: &mut ()) {
-        (self.vtable.drop)(it)
+        self.v_table().struct_info().drop(it)
     }
 } // impl UntypedVRef
+
+impl fmt::Debug for UntypedVRef {
+    fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            formatter,
+            "UntypedVRef {{ v_table: {:?} }}",
+            self.v_table()
+        )
+    }
+}
 
 impl<T: ?Sized> VRef<T>
     where T: marker::Reflect + 'static
@@ -380,19 +490,22 @@ impl<T: ?Sized> VRef<T>
     pub fn new<S>() -> VRef<T>
         where S: DerivedFromTrait<T> + marker::Reflect + 'static
     {
-        VRef { untyped: UntypedVRef::new::<T, S>(), _0: marker::PhantomData }
+        VRef {
+            untyped: UntypedVRef::new(v_table::<T, S>()),
+            _0: marker::PhantomData
+        }
     }
 
-    pub fn get_vtable(&self) -> &'static VTable {
-        self.untyped.get_vtable()
+    pub fn v_table(&self) -> &'static VTable {
+        self.untyped.v_table()
     }
 
-    pub fn get_struct_info(&self) -> &'static StructInfo {
-        self.untyped.get_struct_info()
+    pub fn struct_info(&self) -> &'static StructInfo {
+        self.untyped.struct_info()
     }
 
-    pub fn get_trait_info(&self) -> &'static TraitInfo {
-        self.untyped.get_trait_info()
+    pub fn trait_info(&self) -> &'static TraitInfo {
+        self.untyped.trait_info()
     }
 
     pub fn up_cast<B: ?Sized>(&self) -> VRef<B>
@@ -402,12 +515,22 @@ impl<T: ?Sized> VRef<T>
         VRef { untyped: self.untyped.up_cast::<T, B>(), _0: marker::PhantomData }
     }
 
-    pub fn cast<D: ?Sized>(&self) -> Option<VRef<D>>
+    pub fn down_cast<D: ?Sized>(&self) -> Option<VRef<D>>
         where D: DerivedFromTrait<T> + marker::Reflect + 'static
     {
-        self.untyped.cast::<T, D>().map(|u| {
+        self.untyped.down_cast::<T, D>().map(|u| {
             VRef { untyped: u, _0: marker::PhantomData }
         })
+    }
+
+    pub fn offsets<S>(&self) -> &'static [isize]
+        where S: marker::Reflect + 'static
+    {
+        self.struct_info().offsets(struct_id::<S>())
+    }
+
+    pub fn drop(&self, it: &mut ()) {
+        self.untyped.drop(it)
     }
 } // impl VRef
 
@@ -446,8 +569,8 @@ pub struct Class<T: ?Sized, S>
     where T: marker::Reflect + 'static,
           S: DerivedFromTrait<T> + marker::Reflect + 'static,
 {
-    current: VRef<T>,
-    original: UntypedVRef,
+    v_ref: VRef<T>,
+    offset: isize,
     data: S,
 }
 
@@ -456,79 +579,118 @@ pub struct DynClass<T: ?Sized, S>
     where T: marker::Reflect + 'static,
           S: marker::Reflect + 'static,
 {
-    current: VRef<T>,
-    original: UntypedVRef,
-    data: (),
+    v_ref: VRef<T>,
+    offset: isize,
     _0: marker::PhantomData<S>,
 }
 
 pub type Dyn<T> = DynClass<T, ()>;
 
 //
-// Class
+//  Class & ExtendedClass
 //
 impl<T: ?Sized, S> Class<T, S>
     where T: marker::Reflect + 'static,
           S: DerivedFromTrait<T> + marker::Reflect + 'static,
 {
     pub fn new(data: S) -> Class<T, S> {
-        Class { current: VRef::new::<S>(), original: UntypedVRef::new::<T, S>(), data: data }
+        let o = offset_of!(Self, data);
+
+        Class { v_ref: VRef::new::<S>(), offset: o, data: data }
     }
 } // impl Class
 
+//  drop_with_repr_extern: drop would be adding hidden state, apparently,
+//                         and this layout need to match with that of DynClass
 impl<T: ?Sized, S> Drop for Class<T, S>
     where T: marker::Reflect + 'static,
           S: DerivedFromTrait<T> + marker::Reflect + 'static
 {
-    fn drop(&mut self) {
-        drop(&mut self.data);
-    }
-}
-
-impl<T: ?Sized, S> convert::From<Box<Class<T, S>>> for Box<DynClass<T, S>>
-    where T: marker::Reflect + 'static,
-          S: DerivedFromTrait<T> + marker::Reflect + 'static,
-{
-    fn from(t: Box<Class<T, S>>) -> Box<DynClass<T, S>> {
-        unsafe { mem::transmute(t) }
-    }
+    fn drop(&mut self) {}
 }
 
 //
-// DynClass
+//  DynClass
 //
 impl<T: ?Sized, S> DynClass<T, S>
     where T: marker::Reflect + 'static,
           S: marker::Reflect + 'static,
 {
-/*
- *  FIXME: error: transmute called on types with different sizes: core::raw::TraitObject (128 bits) to &T (64 bits)
-
     pub fn as_trait(&self) -> &T {
         unsafe {
-            mem::transmute(raw::TraitObject {
-                data:   mem::transmute(&self.data),
-                vtable: self.current.get_vtable().table,
+            mem::transmute_copy(&raw::TraitObject {
+                data:   mem::transmute(self.as_struct()),
+                vtable: self.v_ref.v_table().table,
             })
         }
     }
 
     pub fn as_trait_mut(&mut self) -> &mut T {
         unsafe {
-            mem::transmute(raw::TraitObject {
-                data:   mem::transmute(&mut self.data),
-                vtable: self.current.get_vtable().table,
+            mem::transmute_copy(&raw::TraitObject {
+                data:   mem::transmute(self.as_struct_mut()),
+                vtable: self.v_ref.v_table().table,
             })
         }
     }
-*/
 
     pub fn as_struct(&self) -> &S {
-        unsafe { mem::transmute(&self.data) }
+        unsafe { mem::transmute(self.data_ptr()) }
     }
 
     pub fn as_struct_mut(&mut self) -> &mut S {
-        unsafe { mem::transmute(&mut self.data) }
+        unsafe { mem::transmute(self.data_ptr()) }
+    }
+
+    fn data_ptr(&self) -> *mut () {
+        unsafe {
+            let base: *const u8 = mem::transmute(self);
+            mem::transmute(base.offset(self.offset))
+        }
+    }
+
+    pub fn up_cast_trait<B: ?Sized>(&self) -> VRef<B>
+        where T: DerivedFromTrait<B>,
+              B: marker::Reflect + 'static,
+    {
+        if trait_id::<T>() != trait_id::<B>() {
+            self.v_ref.up_cast::<B>()
+        } else {
+            //  The type-system is not flow sensitive enough
+            //  to realize that if T == B, then VRef<T> == VRef<B>.
+            unsafe { mem::transmute(self.v_ref) }
+        }
+    }
+
+    pub fn up_cast_struct<P>(&self) -> isize
+        where S: DerivedFromStruct<P>,
+              P: marker::Reflect + 'static,
+    {
+        if struct_id::<S>() != struct_id::<P>() {
+            let offsets = struct_info::<S>().offsets(struct_id::<P>());
+            assert!(offsets.len() == 1, "Multiple offsets support not implemented yet");
+
+            self.offset + unsafe { offsets.get_unchecked(0) }
+        } else {
+            self.offset
+        }
+    }
+
+    pub fn down_cast_trait<D: ?Sized>(&self) -> Option<VRef<D>>
+        where D: DerivedFromTrait<T> + marker::Reflect + 'static,
+    {
+        self.v_ref.down_cast::<D>()
+    }
+
+    pub fn down_cast_struct<C>(&self) -> Option<isize>
+        where C: DerivedFromStruct<S> + marker::Reflect + 'static,
+    {
+        if struct_id::<S>() == struct_id::<C>() { return Some(self.offset); }
+
+        let offsets = self.v_ref.offsets::<C>();
+        assert!(offsets.len() <= 1, "Support for diamond inheritance is not yet implemented!");
+
+        offsets.first().map(|&o| o)
     }
 } // impl DynClass
 
@@ -537,29 +699,27 @@ impl<T: ?Sized, S> fmt::Debug for DynClass<T, S>
           S: fmt::Debug + marker::Reflect + 'static
 {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-        let data: &S = unsafe { mem::transmute(&self.data) };
         write!(
             formatter,
-            "DynClass {{ current: {:?}, original: {:?}, data: {:?} }}",
-            self.current,
-            self.original,
-            data
+            "DynClass {{ v_ref: {:?}, offset: {}, data: {:?} }}",
+            self.v_ref,
+            self.offset,
+            self.as_struct(),
         )
     }
-}
+} // impl Debug for DynClass
 
 impl<T: ?Sized, S> Drop for DynClass<T, S>
     where T: marker::Reflect + 'static,
           S: marker::Reflect + 'static
 {
     fn drop(&mut self) {
-        let o = self.original;
-        o.drop(&mut self.data);
+        unsafe {
+            let v_ref = self.v_ref;
+            v_ref.drop(mem::transmute(self.as_struct_mut()));
+        }
     }
 }
-
-/*
- *  FIXME: find a way to transmute a raw::TraitObject into a &T
 
 impl<T: ?Sized, S> ops::Deref for DynClass<T, S>
     where T: marker::Reflect + 'static,
@@ -576,22 +736,37 @@ impl<T: ?Sized, S> ops::DerefMut for DynClass<T, S>
 {
     fn deref_mut(&mut self) -> &mut T { self.as_trait_mut() }
 } // impl DerefMut
-*/
 
+impl<T: ?Sized, S> convert::From<Box<Class<T, S>>> for Box<DynClass<T, S>>
+    where T: marker::Reflect + 'static,
+          S: DerivedFromTrait<T> + marker::Reflect + 'static,
+{
+    fn from(t: Box<Class<T, S>>) -> Box<DynClass<T, S>> {
+        unsafe { mem::transmute(t) }
+    }
+}
+
+//
+//  Casting
+//
 impl<T: ?Sized, S, B: ?Sized, P> UpCast<Box<DynClass<B, P>>> for Box<DynClass<T, S>>
     where T: DerivedFromTrait<B> + marker::Reflect + 'static,
-          S: FirstDerivedFromStruct<P> + marker::Reflect + 'static,
+          S: DerivedFromStruct<P> + marker::Reflect + 'static,
           B: marker::Reflect + 'static,
           P: marker::Reflect + 'static,
 {
     fn up_cast(self) -> Box<DynClass<B, P>> {
-        //  Adjust v-ptr, then return
-        let mut s = self;
+        //  Compute new v_ref and offset
+        let new_v_ref = self.up_cast_trait::<B>();
 
-        unsafe {
-            s.current = mem::transmute(s.current.up_cast::<B>());
-            mem::transmute(s)
-        }
+        let new_offset = self.up_cast_struct::<P>();
+
+        //  Commit result
+        let mut s: Box<DynClass<B, P>> = unsafe { mem::transmute(self) };
+        s.v_ref = new_v_ref;
+        s.offset = new_offset;
+
+        s
     }
 }
 
@@ -604,14 +779,7 @@ impl<T: ?Sized, S, B: ?Sized, P> UpCastRef<DynClass<B, P>> for DynClass<T, S>
     fn up_cast_ref(&self) -> &DynClass<B, P> {
         unsafe { mem::transmute(self) }
     }
-}
 
-impl<T: ?Sized, S, B: ?Sized, P> UpCastRefMut<DynClass<B, P>> for DynClass<T, S>
-    where T: FirstDerivedFromTrait<B> + marker::Reflect + 'static,
-          S: FirstDerivedFromStruct<P> + marker::Reflect + 'static,
-          B: marker::Reflect + 'static,
-          P: marker::Reflect + 'static,
-{
     fn up_cast_ref_mut(&mut self) -> &mut DynClass<B, P> {
         unsafe { mem::transmute(self) }
     }
@@ -624,26 +792,35 @@ impl<T: ?Sized, S, D: ?Sized, C> DownCast<Box<DynClass<D, C>>> for Box<DynClass<
           C: FirstDerivedFromStruct<S> + marker::Reflect + 'static,
 {
     fn down_cast(self) -> Result<Box<DynClass<D, C>>, Box<DynClass<T, S>>> {
-        if !(self.original.get_struct_info().is_first_derived)(struct_id::<C>()) {
-            return Err(self);
-        }
+        //  Compute new v_ref and offset, while checking whether they do apply.
+        let new_v_ref = self.down_cast_trait::<D>();
 
-        //  Adjust v-ptr, then return
-        let mut s = self;
-        let new_table = s.original.cast::<T, D>();
+        let new_offset = self.down_cast_struct::<C>();
 
-        match new_table {
-        None => Err(s),
-        Some(v) => { unsafe { s.current = mem::transmute(v); Ok(mem::transmute(s)) } },
+        //  Check whether the conversion makes sense,
+        //  return the result appropriately.
+        if let (Some(v), Some(o)) = (new_v_ref, new_offset) {
+            let mut s: Box<DynClass<D, C>> = unsafe { mem::transmute(self) };
+            s.v_ref = v;
+            s.offset = o;
+            Ok(s)
+        } else {
+            Err(self)
         }
     }
 
     unsafe fn unchecked_down_cast(self) -> Box<DynClass<D, C>> {
-        //  Adjust v-ptr, then return
-        let mut s = self;
+        //  Compute new v_ref and offset, while checking whether they do apply.
+        let new_v_ref = self.down_cast_trait::<D>().unwrap();
 
-        s.current = mem::transmute(s.original.cast::<T, D>().unwrap());
-        mem::transmute(s)
+        let new_offset = self.down_cast_struct::<C>().unwrap();
+
+        //  Commit result
+        let mut s: Box<DynClass<D, C>> = mem::transmute(self);
+        s.v_ref = new_v_ref;
+        s.offset = new_offset;
+
+        s
     }
 }
 
@@ -654,40 +831,35 @@ impl<T: ?Sized, S, D: ?Sized, C> DownCastRef<DynClass<D, C>> for DynClass<T, S>
           C: FirstDerivedFromStruct<S> + marker::Reflect + 'static,
 {
     fn down_cast_ref(&self) -> Option<&DynClass<D, C>> {
-        if !(self.current.get_struct_info().is_first_derived)(struct_id::<C>()) {
-            return None;
-        }
+        let is_trait_ok = self.down_cast_trait::<D>().is_some();
 
-        let vt = self.current.cast::<D>();
-        vt.map(|_| {
-            unsafe { mem::transmute(self) }
-        })
+        let is_struct_ok = self.down_cast_struct::<C>().is_some();
+
+        if is_trait_ok && is_struct_ok {
+            Some(unsafe { mem::transmute(self) })
+        } else {
+            None
+        }
+    }
+
+    fn down_cast_ref_mut(&mut self) -> Option<&mut DynClass<D, C>> {
+        let is_trait_ok = self.down_cast_trait::<D>().is_some();
+
+        let is_struct_ok = self.down_cast_struct::<C>().is_some();
+
+        if is_trait_ok && is_struct_ok {
+            Some(unsafe { mem::transmute(self) })
+        } else {
+            None
+        }
     }
 
     unsafe fn unchecked_down_cast_ref(&self) -> &DynClass<D, C> {
         mem::transmute(self)
-    }
-}
-
-impl<T: ?Sized, S, D: ?Sized, C> DownCastRefMut<DynClass<D, C>> for DynClass<T, S>
-    where T: marker::Reflect + 'static,
-          S: marker::Reflect + 'static,
-          D: FirstDerivedFromTrait<T> + marker::Reflect + 'static,
-          C: FirstDerivedFromStruct<S> + marker::Reflect + 'static
-{
-    fn down_cast_ref_mut(&mut self) -> Option<&mut DynClass<D, C>> {
-        if !(self.current.get_struct_info().is_first_derived)(struct_id::<C>()) {
-            return None;
-        }
-
-        let vt = self.current.cast::<D>();
-        match vt {
-        Some(_) => unsafe { mem::transmute(self) },
-        None => None,
-        }
     }
 
     unsafe fn unchecked_down_cast_ref_mut(&mut self) -> &mut DynClass<D, C> {
         mem::transmute(self)
     }
 }
+
