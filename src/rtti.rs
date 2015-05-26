@@ -414,6 +414,15 @@ pub trait DownCastRef<Target> {
     unsafe fn unchecked_down_cast_ref_mut(&mut self) -> &mut Target;
 }
 
+pub trait Cast<Target> {
+    fn cast(self) -> Result<Target, Self>;
+
+    unsafe fn unchecked_cast(self) -> Target;
+}
+
+//  If Cast is restricted to cross-casts, then CastRef makes little sense...
+//  ... to have a shareable v-ptr, two traits must be related.
+
 //
 //  &T and &mut T
 //
@@ -456,6 +465,8 @@ impl UntypedVRef {
         where B: marker::Reflect + 'static,
               T: ExtendTrait<B> + marker::Reflect + 'static
     {
+        if trait_id::<T>() == trait_id::<B>() { return *self; }
+
         UntypedVRef::new(self.v_table().cast_to_trait::<B>().unwrap())
     }
 
@@ -466,6 +477,17 @@ impl UntypedVRef {
         if trait_id::<T>() == trait_id::<D>() { return Some(*self); }
 
         self.v_table().cast_to_trait::<D>().map(|vt| {
+            UntypedVRef::new(vt)
+        })
+    }
+
+    pub fn cast<T: ?Sized, X: ?Sized>(&self) -> Option<UntypedVRef>
+        where T: marker::Reflect + 'static,
+              X: marker::Reflect + 'static
+    {
+        if trait_id::<T>() == trait_id::<X>() { return Some(*self); }
+
+        self.v_table().cast_to_trait::<X>().map(|vt| {
             UntypedVRef::new(vt)
         })
     }
@@ -520,6 +542,14 @@ impl<T: ?Sized> VRef<T>
         where D: ExtendTrait<T> + marker::Reflect + 'static
     {
         self.untyped.down_cast::<T, D>().map(|u| {
+            VRef { untyped: u, _0: marker::PhantomData }
+        })
+    }
+
+    pub fn cast<X: ?Sized>(&self) -> Option<VRef<X>>
+        where X: marker::Reflect + 'static
+    {
+        self.untyped.cast::<T, X>().map(|u| {
             VRef { untyped: u, _0: marker::PhantomData }
         })
     }
@@ -667,14 +697,12 @@ impl<T: ?Sized, S> DynClass<T, S>
         where S: ExtendStruct<P>,
               P: marker::Reflect + 'static,
     {
-        if struct_id::<S>() != struct_id::<P>() {
-            let offsets = <S as ExtendStruct<P>>::offsets();
-            assert!(offsets.len() == 1, "Multiple offsets support not implemented yet");
+        if struct_id::<S>() == struct_id::<P>() { return self.offset; }
 
-            self.offset + unsafe { offsets.get_unchecked(0) }
-        } else {
-            self.offset
-        }
+        let offsets = <S as ExtendStruct<P>>::offsets();
+        assert!(offsets.len() == 1, "Multiple offsets support not implemented yet");
+
+        self.offset + unsafe { offsets.get_unchecked(0) }
     }
 
     pub fn down_cast_trait<D: ?Sized>(&self) -> Option<VRef<D>>
@@ -694,6 +722,23 @@ impl<T: ?Sized, S> DynClass<T, S>
         assert!(offsets.len() == 1, "Support for diamond inheritance is not yet implemented!");
 
         Some(self.offset - unsafe { offsets.get_unchecked(0) })
+    }
+
+    pub fn cast_trait<X: ?Sized>(&self) -> Option<VRef<X>>
+        where X: marker::Reflect + 'static,
+    {
+        self.v_ref.cast::<X>()
+    }
+
+    pub fn cast_struct<Y>(&self) -> Option<isize>
+        where Y: marker::Reflect + 'static,
+    {
+        if struct_id::<S>() == struct_id::<Y>() { return Some(self.offset); }
+
+        let offsets = self.v_ref.struct_info().offsets(struct_id::<Y>());
+        assert!(offsets.len() <= 1, "Support for diamond inheritance is not yet implemented!");
+
+        offsets.first().map(|&o| o)
     }
 } // impl DynClass
 
@@ -863,6 +908,41 @@ impl<T: ?Sized, S, D: ?Sized, C> DownCastRef<DynClass<D, C>> for DynClass<T, S>
 
     unsafe fn unchecked_down_cast_ref_mut(&mut self) -> &mut DynClass<D, C> {
         mem::transmute(self)
+    }
+}
+
+impl<T: ?Sized, S, X: ?Sized, Y> Cast<Box<DynClass<X, Y>>> for Box<DynClass<T, S>>
+    where T: marker::Reflect + 'static,
+          S: marker::Reflect + 'static,
+          X: marker::Reflect + 'static,
+          Y: marker::Reflect + 'static,
+{
+    fn cast(self) -> Result<Box<DynClass<X, Y>>, Box<DynClass<T, S>>> {
+        let new_v_ref = self.cast_trait::<X>();
+
+        let new_offset = self.cast_struct::<Y>();
+
+        //  Check whether the conversion makes sense,
+        //  return the result appropriately.
+        if let (Some(v), Some(o)) = (new_v_ref, new_offset) {
+            let mut s: Box<DynClass<X, Y>> = unsafe { mem::transmute(self) };
+            s.v_ref = v;
+            s.offset = o;
+            Ok(s)
+        } else {
+            Err(self)
+        }
+    }
+
+    unsafe fn unchecked_cast(self) -> Box<DynClass<X, Y>> {
+        let new_v_ref = self.cast_trait::<X>().unwrap();
+
+        let new_offset = self.cast_struct::<Y>().unwrap();
+
+        let mut s: Box<DynClass<X, Y>> = unsafe { mem::transmute(self) };
+        s.v_ref = new_v_ref;
+        s.offset = new_offset;
+        s
     }
 }
 
