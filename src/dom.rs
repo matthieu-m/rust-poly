@@ -6,7 +6,7 @@ use rtti::{Class,DynClass};
 use rtti::{DownCastRef,UpCast};
 
 //  KLUDGE: should be automatically implemented
-use rtti::{DerivedFromTrait,DerivedFromStruct,FirstDerivedFromTrait,FirstDerivedFromStruct};
+use rtti::{ExtendTrait,ExtendStruct,FirstExtendTrait,FirstExtendStruct};
 
 use std::boxed::Box;
 use std::collections::HashMap;
@@ -135,56 +135,56 @@ pub fn doit() {
 //
 //  KLUDGE: Hand-rolled marker traits for traits
 //
-unsafe impl DerivedFromTrait<Node> for Node {}
-unsafe impl FirstDerivedFromTrait<Node> for Node {}
+unsafe impl ExtendTrait<Node> for Node {}
+unsafe impl FirstExtendTrait<Node> for Node {}
 
-unsafe impl DerivedFromTrait<Node> for Element {}
-unsafe impl FirstDerivedFromTrait<Node> for Element {}
-unsafe impl DerivedFromTrait<Element> for Element {}
-unsafe impl FirstDerivedFromTrait<Element> for Element {}
+unsafe impl ExtendTrait<Node> for Element {}
+unsafe impl FirstExtendTrait<Node> for Element {}
+unsafe impl ExtendTrait<Element> for Element {}
+unsafe impl FirstExtendTrait<Element> for Element {}
 
 //
 //  KLUDGE: Hand-rolled marker traits for structs
 //
-unsafe impl DerivedFromStruct<NodeData> for NodeData {}
-unsafe impl FirstDerivedFromStruct<NodeData> for NodeData {}
+unsafe impl ExtendStruct<NodeData> for NodeData {}
+unsafe impl FirstExtendStruct<NodeData> for NodeData {}
 
-unsafe impl DerivedFromTrait<Node> for NodeData {}
+unsafe impl ExtendTrait<Node> for NodeData {}
 
-unsafe impl DerivedFromStruct<NodeData> for TextNode {}
-unsafe impl FirstDerivedFromStruct<NodeData> for TextNode {}
-unsafe impl DerivedFromStruct<TextNode> for TextNode {}
-unsafe impl FirstDerivedFromStruct<TextNode> for TextNode {}
+unsafe impl ExtendStruct<NodeData> for TextNode {}
+unsafe impl FirstExtendStruct<NodeData> for TextNode {}
+unsafe impl ExtendStruct<TextNode> for TextNode {}
+unsafe impl FirstExtendStruct<TextNode> for TextNode {}
 
-unsafe impl DerivedFromTrait<Node> for TextNode {}
+unsafe impl ExtendTrait<Node> for TextNode {}
 
-unsafe impl DerivedFromStruct<NodeData> for ElementData {}
-unsafe impl FirstDerivedFromStruct<NodeData> for ElementData {}
-unsafe impl DerivedFromStruct<ElementData> for ElementData {}
-unsafe impl FirstDerivedFromStruct<ElementData> for ElementData {}
+unsafe impl ExtendStruct<NodeData> for ElementData {}
+unsafe impl FirstExtendStruct<NodeData> for ElementData {}
+unsafe impl ExtendStruct<ElementData> for ElementData {}
+unsafe impl FirstExtendStruct<ElementData> for ElementData {}
 
-unsafe impl DerivedFromTrait<Node> for ElementData {}
-unsafe impl DerivedFromTrait<Element> for ElementData {}
+unsafe impl ExtendTrait<Node> for ElementData {}
+unsafe impl ExtendTrait<Element> for ElementData {}
 
-unsafe impl DerivedFromStruct<NodeData> for HTMLImageElement {}
-unsafe impl FirstDerivedFromStruct<NodeData> for HTMLImageElement {}
-unsafe impl DerivedFromStruct<ElementData> for HTMLImageElement {}
-unsafe impl FirstDerivedFromStruct<ElementData> for HTMLImageElement {}
-unsafe impl DerivedFromStruct<HTMLImageElement> for HTMLImageElement {}
-unsafe impl FirstDerivedFromStruct<HTMLImageElement> for HTMLImageElement {}
+unsafe impl ExtendStruct<NodeData> for HTMLImageElement {}
+unsafe impl FirstExtendStruct<NodeData> for HTMLImageElement {}
+unsafe impl ExtendStruct<ElementData> for HTMLImageElement {}
+unsafe impl FirstExtendStruct<ElementData> for HTMLImageElement {}
+unsafe impl ExtendStruct<HTMLImageElement> for HTMLImageElement {}
+unsafe impl FirstExtendStruct<HTMLImageElement> for HTMLImageElement {}
 
-unsafe impl DerivedFromTrait<Node> for HTMLImageElement {}
-unsafe impl DerivedFromTrait<Element> for HTMLImageElement {}
+unsafe impl ExtendTrait<Node> for HTMLImageElement {}
+unsafe impl ExtendTrait<Element> for HTMLImageElement {}
 
-unsafe impl DerivedFromStruct<NodeData> for HTMLVideoElement {}
-unsafe impl FirstDerivedFromStruct<NodeData> for HTMLVideoElement {}
-unsafe impl DerivedFromStruct<ElementData> for HTMLVideoElement {}
-unsafe impl FirstDerivedFromStruct<ElementData> for HTMLVideoElement {}
-unsafe impl DerivedFromStruct<HTMLVideoElement> for HTMLVideoElement {}
-unsafe impl FirstDerivedFromStruct<HTMLVideoElement> for HTMLVideoElement {}
+unsafe impl ExtendStruct<NodeData> for HTMLVideoElement {}
+unsafe impl FirstExtendStruct<NodeData> for HTMLVideoElement {}
+unsafe impl ExtendStruct<ElementData> for HTMLVideoElement {}
+unsafe impl FirstExtendStruct<ElementData> for HTMLVideoElement {}
+unsafe impl ExtendStruct<HTMLVideoElement> for HTMLVideoElement {}
+unsafe impl FirstExtendStruct<HTMLVideoElement> for HTMLVideoElement {}
 
-unsafe impl DerivedFromTrait<Node> for HTMLVideoElement {}
-unsafe impl DerivedFromTrait<Element> for HTMLVideoElement {}
+unsafe impl ExtendTrait<Node> for HTMLVideoElement {}
+unsafe impl ExtendTrait<Element> for HTMLVideoElement {}
 
 //
 //  KLUDGE: Hand-rolled v-tables, and their init functions.

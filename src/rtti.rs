@@ -189,7 +189,7 @@ pub fn trait_info_by_id(trait_id: TraitId) -> &'static TraitInfo {
 
 pub fn v_table<Trait: ?Sized, Struct>() -> &'static VTable
     where Trait: marker::Reflect + 'static,
-          Struct: DerivedFromTrait<Trait> + marker::Reflect + 'static
+          Struct: ExtendTrait<Trait> + marker::Reflect + 'static
 {
     let trait_id = trait_id::<Trait>();
     let struct_id = struct_id::<Struct>();
@@ -218,10 +218,10 @@ pub fn v_table_by_id(trait_id: TraitId, struct_id: StructId) -> Option<&'static 
 //
 //  Those intrinsics should be automatically implemented by the compiler, based on the traits and types properties.
 //
-pub unsafe trait DerivedFromTrait<T: ?Sized> {}
-pub unsafe trait DerivedFromStruct<T> {}
-pub unsafe trait FirstDerivedFromTrait<T: ?Sized>: DerivedFromTrait<T> {}
-pub unsafe trait FirstDerivedFromStruct<T>: DerivedFromStruct<T> {}
+pub unsafe trait ExtendTrait<T: ?Sized> {}
+pub unsafe trait ExtendStruct<T> {}
+pub unsafe trait FirstExtendTrait<T: ?Sized>: ExtendTrait<T> {}
+pub unsafe trait FirstExtendStruct<T>: ExtendStruct<T> {}
 
 
 //
@@ -343,7 +343,7 @@ impl fmt::Debug for TraitInfo {
 impl VTable {   
     pub fn new<T: ?Sized, S>(table: *mut ()) -> VTable
         where T: marker::Reflect + 'static,
-              S: DerivedFromTrait<T> + marker::Reflect + 'static,
+              S: ExtendTrait<T> + marker::Reflect + 'static,
     {
         VTable {
             struct_info: struct_info::<S>(),
@@ -454,14 +454,14 @@ impl UntypedVRef {
 
     pub fn up_cast<T: ?Sized, B: ?Sized>(&self) -> UntypedVRef
         where B: marker::Reflect + 'static,
-              T: DerivedFromTrait<B> + marker::Reflect + 'static
+              T: ExtendTrait<B> + marker::Reflect + 'static
     {
         UntypedVRef::new(self.v_table().cast_to_trait::<B>().unwrap())
     }
 
     pub fn down_cast<T: ?Sized, D: ?Sized>(&self) -> Option<UntypedVRef>
         where T: marker::Reflect + 'static,
-              D: DerivedFromTrait<T> + marker::Reflect + 'static
+              D: ExtendTrait<T> + marker::Reflect + 'static
     {
         if trait_id::<T>() == trait_id::<D>() { return Some(*self); }
 
@@ -489,7 +489,7 @@ impl<T: ?Sized> VRef<T>
     where T: marker::Reflect + 'static
 {
     pub fn new<S>() -> VRef<T>
-        where S: DerivedFromTrait<T> + marker::Reflect + 'static
+        where S: ExtendTrait<T> + marker::Reflect + 'static
     {
         VRef {
             untyped: UntypedVRef::new(v_table::<T, S>()),
@@ -511,13 +511,13 @@ impl<T: ?Sized> VRef<T>
 
     pub fn up_cast<B: ?Sized>(&self) -> VRef<B>
         where B: marker::Reflect + 'static,
-              T: DerivedFromTrait<B>
+              T: ExtendTrait<B>
     {
         VRef { untyped: self.untyped.up_cast::<T, B>(), _0: marker::PhantomData }
     }
 
     pub fn down_cast<D: ?Sized>(&self) -> Option<VRef<D>>
-        where D: DerivedFromTrait<T> + marker::Reflect + 'static
+        where D: ExtendTrait<T> + marker::Reflect + 'static
     {
         self.untyped.down_cast::<T, D>().map(|u| {
             VRef { untyped: u, _0: marker::PhantomData }
@@ -568,7 +568,7 @@ impl<T: ?Sized> fmt::Debug for VRef<T>
 #[derive(Debug)]
 pub struct Class<T: ?Sized, S>
     where T: marker::Reflect + 'static,
-          S: DerivedFromTrait<T> + marker::Reflect + 'static,
+          S: ExtendTrait<T> + marker::Reflect + 'static,
 {
     v_ref: VRef<T>,
     offset: isize,
@@ -592,7 +592,7 @@ pub type Dyn<T> = DynClass<T, ()>;
 //
 impl<T: ?Sized, S> Class<T, S>
     where T: marker::Reflect + 'static,
-          S: DerivedFromTrait<T> + marker::Reflect + 'static,
+          S: ExtendTrait<T> + marker::Reflect + 'static,
 {
     pub fn new(data: S) -> Class<T, S> {
         let o = offset_of!(Self, data);
@@ -605,7 +605,7 @@ impl<T: ?Sized, S> Class<T, S>
 //                         and this layout need to match with that of DynClass
 impl<T: ?Sized, S> Drop for Class<T, S>
     where T: marker::Reflect + 'static,
-          S: DerivedFromTrait<T> + marker::Reflect + 'static
+          S: ExtendTrait<T> + marker::Reflect + 'static
 {
     fn drop(&mut self) {}
 }
@@ -651,7 +651,7 @@ impl<T: ?Sized, S> DynClass<T, S>
     }
 
     pub fn up_cast_trait<B: ?Sized>(&self) -> VRef<B>
-        where T: DerivedFromTrait<B>,
+        where T: ExtendTrait<B>,
               B: marker::Reflect + 'static,
     {
         if trait_id::<T>() != trait_id::<B>() {
@@ -664,7 +664,7 @@ impl<T: ?Sized, S> DynClass<T, S>
     }
 
     pub fn up_cast_struct<P>(&self) -> isize
-        where S: DerivedFromStruct<P>,
+        where S: ExtendStruct<P>,
               P: marker::Reflect + 'static,
     {
         if struct_id::<S>() != struct_id::<P>() {
@@ -678,13 +678,13 @@ impl<T: ?Sized, S> DynClass<T, S>
     }
 
     pub fn down_cast_trait<D: ?Sized>(&self) -> Option<VRef<D>>
-        where D: DerivedFromTrait<T> + marker::Reflect + 'static,
+        where D: ExtendTrait<T> + marker::Reflect + 'static,
     {
         self.v_ref.down_cast::<D>()
     }
 
     pub fn down_cast_struct<C>(&self) -> Option<isize>
-        where C: DerivedFromStruct<S> + marker::Reflect + 'static,
+        where C: ExtendStruct<S> + marker::Reflect + 'static,
     {
         if struct_id::<S>() == struct_id::<C>() { return Some(self.offset); }
 
@@ -740,7 +740,7 @@ impl<T: ?Sized, S> ops::DerefMut for DynClass<T, S>
 
 impl<T: ?Sized, S> convert::From<Box<Class<T, S>>> for Box<DynClass<T, S>>
     where T: marker::Reflect + 'static,
-          S: DerivedFromTrait<T> + marker::Reflect + 'static,
+          S: ExtendTrait<T> + marker::Reflect + 'static,
 {
     fn from(t: Box<Class<T, S>>) -> Box<DynClass<T, S>> {
         unsafe { mem::transmute(t) }
@@ -751,8 +751,8 @@ impl<T: ?Sized, S> convert::From<Box<Class<T, S>>> for Box<DynClass<T, S>>
 //  Casting
 //
 impl<T: ?Sized, S, B: ?Sized, P> UpCast<Box<DynClass<B, P>>> for Box<DynClass<T, S>>
-    where T: DerivedFromTrait<B> + marker::Reflect + 'static,
-          S: DerivedFromStruct<P> + marker::Reflect + 'static,
+    where T: ExtendTrait<B> + marker::Reflect + 'static,
+          S: ExtendStruct<P> + marker::Reflect + 'static,
           B: marker::Reflect + 'static,
           P: marker::Reflect + 'static,
 {
@@ -772,8 +772,8 @@ impl<T: ?Sized, S, B: ?Sized, P> UpCast<Box<DynClass<B, P>>> for Box<DynClass<T,
 }
 
 impl<T: ?Sized, S, B: ?Sized, P> UpCastRef<DynClass<B, P>> for DynClass<T, S>
-    where T: FirstDerivedFromTrait<B> + marker::Reflect + 'static,
-          S: FirstDerivedFromStruct<P> + marker::Reflect + 'static,
+    where T: FirstExtendTrait<B> + marker::Reflect + 'static,
+          S: FirstExtendStruct<P> + marker::Reflect + 'static,
           B: marker::Reflect + 'static,
           P: marker::Reflect + 'static,
 {
@@ -789,8 +789,8 @@ impl<T: ?Sized, S, B: ?Sized, P> UpCastRef<DynClass<B, P>> for DynClass<T, S>
 impl<T: ?Sized, S, D: ?Sized, C> DownCast<Box<DynClass<D, C>>> for Box<DynClass<T, S>>
     where T: marker::Reflect + 'static,
           S: marker::Reflect + 'static,
-          D: DerivedFromTrait<T> + marker::Reflect + 'static,
-          C: FirstDerivedFromStruct<S> + marker::Reflect + 'static,
+          D: ExtendTrait<T> + marker::Reflect + 'static,
+          C: FirstExtendStruct<S> + marker::Reflect + 'static,
 {
     fn down_cast(self) -> Result<Box<DynClass<D, C>>, Box<DynClass<T, S>>> {
         //  Compute new v_ref and offset, while checking whether they do apply.
@@ -828,8 +828,8 @@ impl<T: ?Sized, S, D: ?Sized, C> DownCast<Box<DynClass<D, C>>> for Box<DynClass<
 impl<T: ?Sized, S, D: ?Sized, C> DownCastRef<DynClass<D, C>> for DynClass<T, S>
     where T: marker::Reflect + 'static,
           S: marker::Reflect + 'static,
-          D: FirstDerivedFromTrait<T> + marker::Reflect + 'static,
-          C: FirstDerivedFromStruct<S> + marker::Reflect + 'static,
+          D: FirstExtendTrait<T> + marker::Reflect + 'static,
+          C: FirstExtendStruct<S> + marker::Reflect + 'static,
 {
     fn down_cast_ref(&self) -> Option<&DynClass<D, C>> {
         let is_trait_ok = self.down_cast_trait::<D>().is_some();
