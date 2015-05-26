@@ -219,7 +219,7 @@ pub fn v_table_by_id(trait_id: TraitId, struct_id: StructId) -> Option<&'static 
 //  Those intrinsics should be automatically implemented by the compiler, based on the traits and types properties.
 //
 pub unsafe trait ExtendTrait<T: ?Sized> {}
-pub unsafe trait ExtendStruct<T> {}
+pub unsafe trait ExtendStruct<T> { fn offsets() -> &'static [isize]; }
 pub unsafe trait FirstExtendTrait<T: ?Sized>: ExtendTrait<T> {}
 pub unsafe trait FirstExtendStruct<T>: ExtendStruct<T> {}
 
@@ -524,10 +524,10 @@ impl<T: ?Sized> VRef<T>
         })
     }
 
-    pub fn offsets<S>(&self) -> &'static [isize]
+    pub fn is<S>(&self) -> bool
         where S: marker::Reflect + 'static
     {
-        self.struct_info().offsets(struct_id::<S>())
+        self.struct_info().offsets(struct_id::<S>()).len() > 0
     }
 
     pub fn drop(&self, it: &mut ()) {
@@ -668,7 +668,7 @@ impl<T: ?Sized, S> DynClass<T, S>
               P: marker::Reflect + 'static,
     {
         if struct_id::<S>() != struct_id::<P>() {
-            let offsets = struct_info::<S>().offsets(struct_id::<P>());
+            let offsets = <S as ExtendStruct<P>>::offsets();
             assert!(offsets.len() == 1, "Multiple offsets support not implemented yet");
 
             self.offset + unsafe { offsets.get_unchecked(0) }
@@ -688,10 +688,12 @@ impl<T: ?Sized, S> DynClass<T, S>
     {
         if struct_id::<S>() == struct_id::<C>() { return Some(self.offset); }
 
-        let offsets = self.v_ref.offsets::<C>();
-        assert!(offsets.len() <= 1, "Support for diamond inheritance is not yet implemented!");
+        if !self.v_ref.is::<C>() { return None; }
 
-        offsets.first().map(|&o| o)
+        let offsets = <C as ExtendStruct<S>>::offsets();
+        assert!(offsets.len() == 1, "Support for diamond inheritance is not yet implemented!");
+
+        Some(self.offset - unsafe { offsets.get_unchecked(0) })
     }
 } // impl DynClass
 

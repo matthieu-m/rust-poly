@@ -135,53 +135,62 @@ pub fn doit() {
 //
 //  KLUDGE: Hand-rolled marker traits for traits
 //
-unsafe impl ExtendTrait<Node> for Node {}
-unsafe impl FirstExtendTrait<Node> for Node {}
+macro_rules! extend_trait(
+    ( $X:ty ) => {
+        unsafe impl ExtendTrait<$X> for $X {}
+        unsafe impl FirstExtendTrait<$X> for $X {}
+    };
+    ( $X:ty : $( $e:ty),* ) => {
+        extend_trait!($X);
+        $(
+            unsafe impl ExtendTrait<$e> for $X {}
+            unsafe impl FirstExtendTrait<$e> for $X {}
+        )*
+    };
+);
 
-unsafe impl ExtendTrait<Node> for Element {}
-unsafe impl FirstExtendTrait<Node> for Element {}
-unsafe impl ExtendTrait<Element> for Element {}
-unsafe impl FirstExtendTrait<Element> for Element {}
+extend_trait!(Node);
+extend_trait!(Element: Node);
 
 //
 //  KLUDGE: Hand-rolled marker traits for structs
 //
-unsafe impl ExtendStruct<NodeData> for NodeData {}
-unsafe impl FirstExtendStruct<NodeData> for NodeData {}
+macro_rules! extend_struct(
+    ( $X:ty ) => {
+        unsafe impl ExtendStruct<()> for $X { fn offsets() -> &'static [isize] { static ZERO: [isize; 1] = [0]; &ZERO} }
+        unsafe impl FirstExtendStruct<()> for $X {}
+
+        unsafe impl ExtendStruct<$X> for $X { fn offsets() -> &'static [isize] { static ZERO: [isize; 1] = [0]; &ZERO} }
+        unsafe impl FirstExtendStruct<$X> for $X {}
+    };
+    ( $X:ty : $( $e:ty),* ) => {
+        extend_struct!($X);
+        $(
+            unsafe impl ExtendStruct<$e> for $X { fn offsets() -> &'static [isize] { static ZERO: [isize; 1] = [0]; &ZERO} }
+            unsafe impl FirstExtendStruct<$e> for $X {}
+        )*
+    };
+);
+
+extend_struct!(NodeData);
 
 unsafe impl ExtendTrait<Node> for NodeData {}
 
-unsafe impl ExtendStruct<NodeData> for TextNode {}
-unsafe impl FirstExtendStruct<NodeData> for TextNode {}
-unsafe impl ExtendStruct<TextNode> for TextNode {}
-unsafe impl FirstExtendStruct<TextNode> for TextNode {}
+extend_struct!(TextNode: NodeData);
 
 unsafe impl ExtendTrait<Node> for TextNode {}
 
-unsafe impl ExtendStruct<NodeData> for ElementData {}
-unsafe impl FirstExtendStruct<NodeData> for ElementData {}
-unsafe impl ExtendStruct<ElementData> for ElementData {}
-unsafe impl FirstExtendStruct<ElementData> for ElementData {}
+extend_struct!(ElementData: NodeData);
 
 unsafe impl ExtendTrait<Node> for ElementData {}
 unsafe impl ExtendTrait<Element> for ElementData {}
 
-unsafe impl ExtendStruct<NodeData> for HTMLImageElement {}
-unsafe impl FirstExtendStruct<NodeData> for HTMLImageElement {}
-unsafe impl ExtendStruct<ElementData> for HTMLImageElement {}
-unsafe impl FirstExtendStruct<ElementData> for HTMLImageElement {}
-unsafe impl ExtendStruct<HTMLImageElement> for HTMLImageElement {}
-unsafe impl FirstExtendStruct<HTMLImageElement> for HTMLImageElement {}
+extend_struct!(HTMLImageElement: NodeData, ElementData);
 
 unsafe impl ExtendTrait<Node> for HTMLImageElement {}
 unsafe impl ExtendTrait<Element> for HTMLImageElement {}
 
-unsafe impl ExtendStruct<NodeData> for HTMLVideoElement {}
-unsafe impl FirstExtendStruct<NodeData> for HTMLVideoElement {}
-unsafe impl ExtendStruct<ElementData> for HTMLVideoElement {}
-unsafe impl FirstExtendStruct<ElementData> for HTMLVideoElement {}
-unsafe impl ExtendStruct<HTMLVideoElement> for HTMLVideoElement {}
-unsafe impl FirstExtendStruct<HTMLVideoElement> for HTMLVideoElement {}
+extend_struct!(HTMLVideoElement: NodeData, ElementData);
 
 unsafe impl ExtendTrait<Node> for HTMLVideoElement {}
 unsafe impl ExtendTrait<Element> for HTMLVideoElement {}
