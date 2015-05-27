@@ -3,6 +3,7 @@
 #![feature(associated_consts)]
 
 #[macro_use]
+mod internal;
 mod rtti;
 mod dom;
 
@@ -15,7 +16,7 @@ fn main() {
         let mut tables = Vec::new();
         dom::register_struct_info(&mut tables);
         // ...
-        rtti::init_struct_info_registry(tables);
+        internal::init_struct_info_registry(tables);
         println!("StructInfo registered");
     }
     {
@@ -23,7 +24,7 @@ fn main() {
         let mut tables = Vec::new();
         dom::register_trait_info(&mut tables);
         // ...
-        rtti::init_trait_info_registry(tables);
+        internal::init_trait_info_registry(tables);
         println!("TraitInfo registered");
     }
     {
@@ -31,7 +32,7 @@ fn main() {
         let mut tables = Vec::new();
         dom::register_vtables(&mut tables);
         // ...
-        rtti::init_vtable_registry(tables);
+        internal::init_vtable_registry(tables);
         println!("VTable registered");
     }
 

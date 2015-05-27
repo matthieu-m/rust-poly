@@ -1,12 +1,12 @@
 //
 //  Alright let's implement that DOM's example
 //
-use rtti;
 use rtti::{Class,DynClass};
 use rtti::{DownCastRef,UpCast};
 
 //  KLUDGE: should be automatically implemented
-use rtti::{ExtendTrait,ExtendStruct,FirstExtendTrait,FirstExtendStruct};
+use internal;
+use internal::{ExtendTrait,ExtendStruct,FirstExtendTrait,FirstExtendStruct};
 
 use std::boxed::Box;
 use std::collections::HashMap;
@@ -201,11 +201,11 @@ unsafe impl ExtendTrait<Element> for HTMLVideoElement {}
 //  It's a bit ugly, but keeps from polluting the demo code
 //  with distracting bits.
 //
-pub fn register_struct_info(collector: &mut Vec<(rtti::StructId, rtti::StructInfo)>) {
+pub fn register_struct_info(collector: &mut Vec<(internal::StructId, internal::StructInfo)>) {
     use core::marker;
     use core::mem;
     use core::ptr;
-    use rtti::{StructId, StructInfo, TraitId, VTable, struct_id, v_table_by_id};
+    use internal::{StructId, StructInfo, TraitId, VTable, struct_id, v_table_by_id};
 
     fn make<S>(off: fn (StructId) -> &'static [isize]) -> (StructId, StructInfo)
         where S: marker::Reflect + 'static
@@ -261,9 +261,9 @@ pub fn register_struct_info(collector: &mut Vec<(rtti::StructId, rtti::StructInf
     collector.push(make::<HTMLVideoElement>(offsets_of_html_video_element));
 } // fn register_struct_info
 
-pub fn register_trait_info(collector: &mut Vec<(rtti::TraitId, rtti::TraitInfo)>) {
+pub fn register_trait_info(collector: &mut Vec<(internal::TraitId, internal::TraitInfo)>) {
     use core::marker;
-    use rtti::{StructId, TraitId, TraitInfo, VTable, trait_id, v_table_by_id};
+    use internal::{StructId, TraitId, TraitInfo, VTable, trait_id, v_table_by_id};
 
     fn make<T: ?Sized>() -> (TraitId, TraitInfo)
         where T: marker::Reflect + 'static
@@ -284,7 +284,7 @@ pub fn register_trait_info(collector: &mut Vec<(rtti::TraitId, rtti::TraitInfo)>
     collector.push(make::<Element>());
 } // fn register_trait_info
 
-pub fn register_vtables(collector: &mut Vec<(rtti::TraitId, rtti::StructId, rtti::VTable)>) {
+pub fn register_vtables(collector: &mut Vec<(internal::TraitId, internal::StructId, internal::VTable)>) {
     collector.push(make_vtable_entry!(Node, NodeData));
     collector.push(make_vtable_entry!(Node, TextNode));
 
