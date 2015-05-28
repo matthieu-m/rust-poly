@@ -6,7 +6,7 @@ use rtti::{DownCastRef,UpCast};
 
 //  KLUDGE: should be automatically implemented
 use internal;
-use internal::{ExtendTrait,ExtendStruct,FirstExtendTrait,FirstExtendStruct};
+use internal::{ExtendTrait,ExtendStruct,FirstExtendTrait,FirstExtendStruct,TraitExtendTrait};
 
 use std::boxed::Box;
 use std::collections::HashMap;
@@ -139,18 +139,22 @@ macro_rules! extend_trait(
     ( $X:ty ) => {
         unsafe impl ExtendTrait<$X> for $X {}
         unsafe impl FirstExtendTrait<$X> for $X {}
+        unsafe impl TraitExtendTrait<$X> for $X { fn offset() -> isize { 0 } }
     };
-    ( $X:ty : $( $e:ty),* ) => {
+    ( $X:ty : $( $e:ty => $o:expr ),* ) => {
         extend_trait!($X);
         $(
             unsafe impl ExtendTrait<$e> for $X {}
             unsafe impl FirstExtendTrait<$e> for $X {}
+            unsafe impl TraitExtendTrait<$e> for $X {
+                fn offset() -> isize { use std; $o * std::mem::size_of::<internal::VTable>() as isize }
+            }
         )*
     };
 );
 
 extend_trait!(Node);
-extend_trait!(Element: Node);
+extend_trait!(Element: Node => 0);
 
 //
 //  KLUDGE: Hand-rolled marker traits for structs
@@ -284,17 +288,38 @@ pub fn register_trait_info(collector: &mut Vec<(internal::TraitId, internal::Tra
     collector.push(make::<Element>());
 } // fn register_trait_info
 
-pub fn register_vtables(collector: &mut Vec<(internal::TraitId, internal::StructId, internal::VTable)>) {
-    collector.push(make_vtable_entry!(Node, NodeData));
-    collector.push(make_vtable_entry!(Node, TextNode));
+macro_rules! register_struct(
+    ($tables:ident, $indices:ident, $S:ty, $HT:ty, $( $T:ty => $off:expr, )* ) => {
+        {
+            $tables.push(
+                (
+                    ( internal::trait_id::<$HT>(), internal::struct_id::<$S>(), ),
+                    Box::new([make_vtable!($HT, $S) $(,make_vtable!($T, $S))* ]),
+                )
+            );
+            $(
+                $indices.push(
+                    (
+                        ( internal::trait_id::<$T>(), internal::struct_id::<$S>(), ),
+                        ( internal::trait_id::<$HT>(), internal::struct_id::<$S>(), ),
+                        $off,
+                    )
+                );
+            )*
+        }
+    };
+);
 
-    collector.push(make_vtable_entry!(Node, ElementData));
-    collector.push(make_vtable_entry!(Element, ElementData));
+pub fn register_vtables(
+    tables: &mut internal::VTableRegistryTables,
+    indices: &mut internal::VTableRegistryIndices,
+)
+{
+    register_struct!(tables, indices, NodeData, Node,);
+    register_struct!(tables, indices, TextNode, Node,);
 
-    collector.push(make_vtable_entry!(Node, HTMLImageElement));
-    collector.push(make_vtable_entry!(Element, HTMLImageElement));
-
-    collector.push(make_vtable_entry!(Node, HTMLVideoElement));
-    collector.push(make_vtable_entry!(Element, HTMLVideoElement));
+    register_struct!(tables, indices, ElementData, Element, Node => 1,);
+    register_struct!(tables, indices, HTMLImageElement, Element, Node => 1,);
+    register_struct!(tables, indices, HTMLVideoElement, Element, Node => 1,);
 } // fn register_vtables
 

@@ -71,15 +71,11 @@ macro_rules! make_vptr(
 
 // KLUDGE
 #[macro_export]
-macro_rules! make_vtable_entry(
+macro_rules! make_vtable(
     ($T:ty, $S:ty) => (
         {
-            (
-                $crate::internal::trait_id::<$T>(),
-                $crate::internal::struct_id::<$S>(),
-                $crate::internal::VTable::new::<$T, $S>(
-                    make_vptr!($T, $S)
-                )
+            $crate::internal::VTable::new::<$T, $S>(
+                make_vptr!($T, $S)
             )
         }
     )
@@ -96,8 +92,13 @@ struct TraitInfoRegistry {
 }
 
 // KLUDGE
+pub type VTableRegistryId = (TraitId, StructId);
+pub type VTableRegistryTables = Vec<(VTableRegistryId, Box<[VTable]>)>;
+pub type VTableRegistryIndices = Vec<(VTableRegistryId, VTableRegistryId, isize)>;
+
 struct VTableRegistry {
-    inner: std::sync::Arc<Vec<(TraitId, StructId, VTable)>>,
+    tables: std::sync::Arc<VTableRegistryTables>,
+    indices: std::sync::Arc<VTableRegistryIndices>,
 }
 
 // KLUDGE
@@ -128,11 +129,15 @@ pub fn init_trait_info_registry(registry: Vec<(TraitId, TraitInfo)>) {
 }
 
 // KLUDGE
-pub fn init_vtable_registry(registry: Vec<(TraitId, StructId, VTable)>) {
+pub fn init_vtable_registry(tables: VTableRegistryTables, indices: VTableRegistryIndices)
+{
     static ONCE: std::sync::Once = std::sync::ONCE_INIT;
     unsafe {
         ONCE.call_once(|| {
-            let registry = VTableRegistry { inner: std::sync::Arc::new(registry) };
+            let registry = VTableRegistry {
+                tables: std::sync::Arc::new(tables),
+                indices: std::sync::Arc::new(indices),
+            };
             VTABLE_REGISTRY = mem::transmute(Box::new(registry));
         });
     }
@@ -194,20 +199,47 @@ pub fn v_table<Trait: ?Sized, Struct>() -> &'static VTable
 }
 
 pub fn v_table_by_id(trait_id: TraitId, struct_id: StructId) -> Option<&'static VTable> {
-    unsafe {
+    type Id = VTableRegistryId;
+
+    fn locate_index(registry: &'static VTableRegistry, id: Id) -> Option<(Id, isize)> {
+        for &(k_id, v_id, off) in &*registry.indices {
+            if k_id == id { return Some((v_id, off)); }
+        }
+
+        None
+    }
+
+    fn locate_vtable(registry: &'static VTableRegistry, id: Id, offset: isize) -> Option<&'static VTable> {
+        for &(k_id, ref array) in &*registry.tables {
+            if k_id != id { continue; }
+            
+            return Some(unsafe {
+                let base: *const u8 = mem::transmute(array.get_unchecked(0));
+                let v_table: &'static VTable = mem::transmute(base.offset(offset));
+                v_table
+            });
+        }
+
+        None
+    }
+
+    let registry: &'static VTableRegistry = unsafe {
         // This function is supposed to be an intrinsic substituted by the compiler,
         // so I won't be thinking too hard about race conditions...
         if VTABLE_REGISTRY.is_null() {
             panic!("Call init_vtable_registry before the first call to v_table.")
         }
 
-        for &(t_id, s_id, ref vtable) in &*(*VTABLE_REGISTRY).inner {
-            if t_id == trait_id && s_id == struct_id { return Some(vtable); }
-        }
+        &*VTABLE_REGISTRY
+    };
 
-        None
+    let key = (trait_id, struct_id);
+
+    match locate_index(registry, key) {
+    Some((id, offset)) => locate_vtable(registry, id, offset),
+    None               => locate_vtable(registry, key, 0),
     }
-}
+} // v_table_by_id
 
 
 //
@@ -215,10 +247,11 @@ pub fn v_table_by_id(trait_id: TraitId, struct_id: StructId) -> Option<&'static 
 //
 //  Those intrinsics should be automatically implemented by the compiler, based on the traits and types properties.
 //
-pub unsafe trait ExtendTrait<T: ?Sized> {}
+pub unsafe trait ExtendTrait<T: ?Sized> { }
 pub unsafe trait ExtendStruct<T> { fn offsets() -> &'static [isize]; }
 pub unsafe trait FirstExtendTrait<T: ?Sized>: ExtendTrait<T> {}
 pub unsafe trait FirstExtendStruct<T>: ExtendStruct<T> {}
+pub unsafe trait TraitExtendTrait<T: ?Sized>: ExtendTrait<T> { fn offset() -> isize; }
 
 
 //

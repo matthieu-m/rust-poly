@@ -17,7 +17,7 @@ use core::raw;
 
 use std;
 
-use internal::{FirstExtendStruct, FirstExtendTrait, ExtendStruct, ExtendTrait};
+use internal::{ExtendStruct, ExtendTrait, FirstExtendStruct, FirstExtendTrait, TraitExtendTrait};
 use internal::{StructInfo, TraitInfo, VTable};
 use internal::{struct_id, trait_id, v_table};
 
@@ -105,16 +105,19 @@ impl UntypedVRef {
 
     pub fn up_cast<T: ?Sized, B: ?Sized>(&self) -> UntypedVRef
         where B: marker::Reflect + 'static,
-              T: ExtendTrait<B> + marker::Reflect + 'static
+              T: TraitExtendTrait<B> + marker::Reflect + 'static
     {
-        if trait_id::<T>() == trait_id::<B>() { return *self; }
+        let v_table: &'static VTable = unsafe {
+            let raw: *const u8 = mem::transmute(self.v_table);
+            mem::transmute(raw as isize + <T as TraitExtendTrait<B>>::offset())
+        };
 
-        UntypedVRef::new(self.v_table().cast_to_trait::<B>().unwrap())
+        UntypedVRef::new(v_table)
     }
 
     pub fn down_cast<T: ?Sized, D: ?Sized>(&self) -> Option<UntypedVRef>
         where T: marker::Reflect + 'static,
-              D: ExtendTrait<T> + marker::Reflect + 'static
+              D: TraitExtendTrait<T> + marker::Reflect + 'static
     {
         if trait_id::<T>() == trait_id::<D>() { return Some(*self); }
 
@@ -175,13 +178,13 @@ impl<T: ?Sized> VRef<T>
 
     pub fn up_cast<B: ?Sized>(&self) -> VRef<B>
         where B: marker::Reflect + 'static,
-              T: ExtendTrait<B>
+              T: TraitExtendTrait<B>
     {
         VRef { untyped: self.untyped.up_cast::<T, B>(), _0: marker::PhantomData }
     }
 
     pub fn down_cast<D: ?Sized>(&self) -> Option<VRef<D>>
-        where D: ExtendTrait<T> + marker::Reflect + 'static
+        where D: TraitExtendTrait<T> + marker::Reflect + 'static
     {
         self.untyped.down_cast::<T, D>().map(|u| {
             VRef { untyped: u, _0: marker::PhantomData }
@@ -521,7 +524,7 @@ impl<T: ?Sized, S> convert::From<Box<Class<T, S>>> for Box<DynClass<T, S>>
 //  Casting
 //
 impl<T: ?Sized, S, B: ?Sized, P> UpCast<Box<DynClass<B, P>>> for Box<DynClass<T, S>>
-    where T: ExtendTrait<B> + marker::Reflect + 'static,
+    where T: TraitExtendTrait<B> + marker::Reflect + 'static,
           S: ExtendStruct<P> + marker::Reflect + 'static,
           B: marker::Reflect + 'static,
           P: marker::Reflect + 'static,
@@ -559,7 +562,7 @@ impl<T: ?Sized, S, B: ?Sized, P> UpCastRef<DynClass<B, P>> for DynClass<T, S>
 impl<T: ?Sized, S, D: ?Sized, C> DownCast<Box<DynClass<D, C>>> for Box<DynClass<T, S>>
     where T: marker::Reflect + 'static,
           S: marker::Reflect + 'static,
-          D: ExtendTrait<T> + marker::Reflect + 'static,
+          D: TraitExtendTrait<T> + marker::Reflect + 'static,
           C: FirstExtendStruct<S> + marker::Reflect + 'static,
 {
     fn down_cast(self) -> Result<Box<DynClass<D, C>>, Box<DynClass<T, S>>> {
@@ -598,7 +601,7 @@ impl<T: ?Sized, S, D: ?Sized, C> DownCast<Box<DynClass<D, C>>> for Box<DynClass<
 impl<T: ?Sized, S, D: ?Sized, C> DownCastRef<DynClass<D, C>> for DynClass<T, S>
     where T: marker::Reflect + 'static,
           S: marker::Reflect + 'static,
-          D: FirstExtendTrait<T> + marker::Reflect + 'static,
+          D: FirstExtendTrait<T> + TraitExtendTrait<T> + marker::Reflect + 'static,
           C: FirstExtendStruct<S> + marker::Reflect + 'static,
 {
     fn down_cast_ref(&self) -> Option<&DynClass<D, C>> {
@@ -776,7 +779,7 @@ impl<'a, T: ?Sized, S> convert::From<DynRefMut<'a, T, S>> for DynRef<'a, T, S>
 //  Casting
 //
 impl<'a, T: ?Sized, S, B: ?Sized, P> UpCast<DynRef<'a, B, P>> for DynRef<'a, T, S>
-    where T: ExtendTrait<B> + marker::Reflect + 'static,
+    where T: TraitExtendTrait<B> + marker::Reflect + 'static,
           S: ExtendStruct<P> + marker::Reflect + 'static,
           B: marker::Reflect + 'static,
           P: marker::Reflect + 'static,
@@ -792,7 +795,7 @@ impl<'a, T: ?Sized, S, B: ?Sized, P> UpCast<DynRef<'a, B, P>> for DynRef<'a, T, 
 }
 
 impl<'a, T: ?Sized, S, B: ?Sized, P> UpCast<DynRefMut<'a, B, P>> for DynRefMut<'a, T, S>
-    where T: ExtendTrait<B> + marker::Reflect + 'static,
+    where T: TraitExtendTrait<B> + marker::Reflect + 'static,
           S: ExtendStruct<P> + marker::Reflect + 'static,
           B: marker::Reflect + 'static,
           P: marker::Reflect + 'static,
@@ -810,8 +813,8 @@ impl<'a, T: ?Sized, S, B: ?Sized, P> UpCast<DynRefMut<'a, B, P>> for DynRefMut<'
 impl<'a, T: ?Sized, S, D: ?Sized, C> DownCast<DynRef<'a, D, C>> for DynRef<'a, T, S>
     where T: marker::Reflect + 'static,
           S: marker::Reflect + 'static,
-          D: ExtendTrait<T> + marker::Reflect + 'static,
-          C: FirstExtendStruct<S> + marker::Reflect + 'static,
+          D: TraitExtendTrait<T> + marker::Reflect + 'static,
+          C: ExtendStruct<S> + marker::Reflect + 'static,
 {
     fn down_cast(self) -> Result<DynRef<'a, D, C>, DynRef<'a, T, S>> {
         //  Compute new v_ref and offset, while checking whether they do apply.
@@ -842,8 +845,8 @@ impl<'a, T: ?Sized, S, D: ?Sized, C> DownCast<DynRef<'a, D, C>> for DynRef<'a, T
 impl<'a, T: ?Sized, S, D: ?Sized, C> DownCast<DynRefMut<'a, D, C>> for DynRefMut<'a, T, S>
     where T: marker::Reflect + 'static,
           S: marker::Reflect + 'static,
-          D: ExtendTrait<T> + marker::Reflect + 'static,
-          C: FirstExtendStruct<S> + marker::Reflect + 'static,
+          D: TraitExtendTrait<T> + marker::Reflect + 'static,
+          C: ExtendStruct<S> + marker::Reflect + 'static,
 {
     fn down_cast(self) -> Result<DynRefMut<'a, D, C>, DynRefMut<'a, T, S>> {
         //  Compute new v_ref and offset, while checking whether they do apply.

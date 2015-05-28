@@ -30,9 +30,10 @@ fn main() {
     {
         // KLUDGE
         let mut tables = Vec::new();
-        dom::register_vtables(&mut tables);
+        let mut indices = Vec::new();
+        dom::register_vtables(&mut tables, &mut indices);
         // ...
-        internal::init_vtable_registry(tables);
+        internal::init_vtable_registry(tables, indices);
         println!("VTable registered");
     }
 
