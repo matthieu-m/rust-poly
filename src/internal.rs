@@ -230,6 +230,8 @@ pub struct StructInfo {
     struct_id: StructId,
     v_table_getter: fn (TraitId) -> Option<&'static VTable>,
     offsets_getter: fn (StructId) -> &'static [isize],
+    //  FIXME: the Clone trait is not for now amenable to cloning in raw storage.
+    //  cloner: Option<fn (&mut (), *mut u8) -> ()>,
     dropper: fn (&mut ()) -> (),
 }
 

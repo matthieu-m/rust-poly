@@ -482,7 +482,7 @@ impl<T: ?Sized, S> fmt::Debug for DynClass<T, S>
 
 impl<T: ?Sized, S> Drop for DynClass<T, S>
     where T: marker::Reflect + 'static,
-          S: marker::Reflect + 'static
+          S: marker::Reflect + 'static,
 {
     fn drop(&mut self) {
         unsafe {
