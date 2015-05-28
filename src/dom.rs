@@ -2,7 +2,7 @@
 //  Alright let's implement that DOM's example
 //
 use rtti::{Class,DynClass};
-use rtti::{DownCastRef,UpCast};
+use rtti::{DownCastRef,UpCast,UpCastRef};
 
 //  KLUDGE: should be automatically implemented
 use internal;
@@ -120,14 +120,17 @@ pub fn doit() {
 
     process_any_element((*video_element).as_trait());
 
-    let node = video_element.as_struct()._first_parent._first_parent.first_child.as_ref().unwrap();
+    let child_node = video_element.as_struct()._first_parent._first_parent.first_child.as_ref().unwrap();
 
-    if let Some(text) = { let t: Option<&DynClass<Node, TextNode>> = (*node).down_cast_ref(); t } {
-        println!("I got me some text node {:?}", &text);
-    } else if let Some(element) = { let t: Option<&DynClass<Element, ElementData>> = (*node).down_cast_ref(); t } {
-        println!("I got me some element {:?}", &element);
-    } else {
-        println!("Oh shoot, nothing I know!");
+    for node in [child_node, video_element.up_cast_ref()].iter() {
+        if let Some(text) = { let t: Option<&DynClass<Node, TextNode>> = (*node).down_cast_ref(); t } {
+            println!("I got me some text node {:?}", &text);
+        } else if let Some(element) = { let t: Option<&DynClass<Element, ElementData>> = (*node).down_cast_ref(); t } {
+            println!("I got me some element {:?}", &element);
+            element.do_the_thing();
+        } else {
+            println!("Oh shoot, nothing I know!");
+        }
     }
 }
 

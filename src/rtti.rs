@@ -559,6 +559,21 @@ impl<T: ?Sized, S, B: ?Sized, P> UpCastRef<DynClass<B, P>> for DynClass<T, S>
     }
 }
 
+impl<T: ?Sized, S, B: ?Sized, P> UpCastRef<Box<DynClass<B, P>>> for Box<DynClass<T, S>>
+    where T: FirstExtendTrait<B> + marker::Reflect + 'static,
+          S: FirstExtendStruct<P> + marker::Reflect + 'static,
+          B: marker::Reflect + 'static,
+          P: marker::Reflect + 'static,
+{
+    fn up_cast_ref(&self) -> &Box<DynClass<B, P>> {
+        unsafe { mem::transmute(self) }
+    }
+
+    fn up_cast_ref_mut(&mut self) -> &mut Box<DynClass<B, P>> {
+        unsafe { mem::transmute(self) }
+    }
+}
+
 impl<T: ?Sized, S, D: ?Sized, C> DownCast<Box<DynClass<D, C>>> for Box<DynClass<T, S>>
     where T: marker::Reflect + 'static,
           S: marker::Reflect + 'static,
