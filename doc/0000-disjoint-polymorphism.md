@@ -37,7 +37,7 @@ A summary of those requirements is given here:
 
 There have already been a number of proposals (see [Summary of Efficient Inheritance RFCs](https://internals.rust-lang.org/t/summary-of-efficient-inheritance-rfcs/494)).
 
-This RFC is similar in nature to [Fat Objects](https://github.com/rust-lang/rfcs/pull/9) and tries not to focus on building independent bricks, but instead focus on maximizing integration with the existing code and avoid splitting the Rust landscape into two incompatible run-time polymorphism paradigms, which would hurt re-usability. It is also similar in nature to [Extending Enums](https://github.com/rust-lang/rfcs/pull/11).
+This RFC is similar in nature to [Fat Objects](https://github.com/rust-lang/rfcs/pull/9) and tries not to focus on building independent bricks, but instead focus on maximizing integration with the existing code and avoid splitting the Rust landscape into two incompatible run-time polymorphism paradigms, which would hurt re-usability. It is also similar in nature to [Trait based inheritance](https://github.com/rust-lang/rfcs/pull/223).
 
 Indeed, this RFC designs two disjoint polymorphism paths (one for data, one for interfaces) and emphasizes a clean separation of concern between payload (`struct`), behaviour (`trait`) and usage (`Box<Trait>` or `SomeThinPointer<Trait>`).
 
@@ -818,9 +818,11 @@ Yet, despite being lightweight and rusty, it is quite possible to translate trad
 
 # Alternatives
 
+
 ## `*CastRef`
 
 It is unclear whether those variants are really useful, or whether they could be supplanted by implementing the `*Cast` traits on reference types instead.
+
 
 ## Extension syntax
 
@@ -836,17 +838,20 @@ Despite the ease of introducing such an attribute, there seems to be a number of
 
 It is unclear whether first-class syntax support for this feature is really desired, though, as it could be an edge case.
 
+
 ## Short-hand notation `:`
 
 The short-hand notation for `syntax` extension (or even, `trait` extension) is not necessary; however it greatly simplifies writing bounds, in a way that current Rustaceans have already internalized.
 
 Still, in the presence of the intrinsic traits, it is redundant.
 
+
 ## Short-hand notation `as`
 
 The short-hand notation for up-casting is not necessary, however `as` is greatly simplifies writing the up-casts, in a way that current Rustaceans have already internalized.
 
 Still, in the presence of the `UpCast*` traits, it is redundant.
+
 
 ## Multiple parents
 
@@ -864,6 +869,7 @@ And finally, full-support for parent ambiguity is also possible, in multiple way
 
 > Note: the fate of the proposed common ancestor `()` hangs in the balance here as the ability to cast to `()` requires support for parent ambiguity. Without a common ancestor, `Dyn<T>` requires a full-blown implementation rather than being a mere alias.
 
+
 ## `'static` lifetime
 
 Today, in `Any`, the `'static` lifetime is required because `Any` erases the lifetime.
@@ -874,6 +880,7 @@ This seems arbitrarily restrictive, and it seems that:
  - the safety could instead be enforced at library level, `Class` and `DynClass` could for example be extended to take a lifetime, and up-casts/down-casts would only be allowed to *narrow* the lifetime (yes, narrowing whatever the direction of the cast)
 
 It could be worth future-proofing the API (introducing an extraneous lifetime in `Class` and `Dyn*` but with a `'static` bound for now), to avoid API changes, but may not be worth introducing it from the get-go: there is already much to deal with.
+
 
 ## Layout of `VTable`
 
@@ -886,11 +893,13 @@ Other layouts are possible:
 
 The current layout was proposed as a normalized version of what the v-table could look like; whilst still remaining efficient. Benchmarks are necessary to effectively measure the effect of the various options on the performance of different usecases (method call, drop/clone call, casting).
 
+
 ## Sized, Typed, `VTable`
 
 A dedicated (compiler-generated) `TypedVTable<T>` could be generated for each trait, allowing a user to navigate the v-table in library code (even sub-tables and methods).
 
 This RFC proposes NOT to introduce such a type for now, as it can be added in a backward compatible fashion.
+
 
 ## Library section
 
@@ -899,11 +908,34 @@ The entire library section could be tabled, or an entirely different version of 
 Notably, even without the library section, one would gain casts on existing `&T` and `&mut T` references.
 
 
+## Comparison to existing RFCs
+
+There are many other RFCs, as already mentioned:
+
+ - [#9](https://github.com/rust-lang/rfcs/pull/9): Fat Objects
+ - [#11](https://github.com/rust-lang/rfcs/pull/11): Extending Enums
+ - [#223](https://github.com/rust-lang/rfcs/pull/223): Trait Based Inheritance
+ - [#250](https://github.com/rust-lang/rfcs/pull/250): Associated Field Inheritance
+
+This RFC emphasizes *flexibility* and a clean separation of concern between payload (`struct`), behaviour (`trait`) and usage (`&T` or `&Dyn<T>`). The same `struct` or `trait` can freely be shared in situations where thin pointers are desirable and in situations they are not.
+
+This RFC can be seen as a refined version of Fat Objects (#9), proposing a more fully fleshed out implementation and simplifying the implementation of non-virtual methods by simply adding them to the `struct` rather than creating an extraneous `trait`. It was also pointed by gereeter (author of Trait Based Inheritance (#223)) that there was some overlap.
+
+Compared to `...` (#11), this RFC does not require distinguishing between `enum` that can be extended and `enum` that cannot (mixes payload and usage). This distinction already exists today in C++ (inheriting a class without a `virtual` destructor) and has proven to be a pain point of the language; it introduces a split in the language ecosystem between those `struct` that can be extended and those that cannot. On the contrary, this RFC emphasizes that every existing `trait` and `struct` can be reused, and no foresight is necessary when designing new ones. It is somewhat less ambitious, as it does not attempt any large scale changes to the language beyond fulfilling the given requirements, but at the same time implements up-casting and down-casting for existing traits.
+
+Compared to associated fields (#250), this RFC does not inject data in traits (mixes payload and behaviour). It neatly sidesteps the issue of splitting the ecosystem into stateful traits and stateless traits, and therefore guarantees that traits can be shared between any library, in any direction.
+
+Compared to the associated fields (#250), this RFC's approach to fields is both cheaper than the indirect fields approach (with its required offset in v-table per field) and less constrained than the `#[repr(fixed)]` approach (which precludes implementing two fixed traits with contradicting requirements). It also does not require the compiler to try and guarantee the non-aliasing of fields. On the other hand, it is obviously less flexible given its conservative choice (no renaming/re-arrangement).
+
+Compared to the associated fields (#250), this RFC's approach does not require that common fields be public, which is a violation of encapsulation. The `struct` can define methods with exclusive access to its fields, guaranteeing the invariants of its choice, and because those methods are not polymorphic they can be easily inlined. Still, if desired, its fields *can* be public. Note that this RFC does require that the Parent/Child relationship be public, as it is exposed via traits.
+
+Compared to the Internal Vtable (#250), this RFC once again avoids enforcing that a `struct` or `trait` only be usable in a particular way (mixes payload and usage). This allows using either the `struct` or `trait` in other contexts, where this particular representation would be less attractive (it is known that LLVM has issues with devirtualizing calls through internal v-pointers, for example).
+
 
 # Unresolved Questions
 
  - Could `DownCastRef` and `UpCastRef` be supplanted by implementing the regular `DownCast`/`UpCast` on references instead?
- - How to provide cloning? Beyond `Clone` not being object-safe today, it also does not work with a raw memory area, furthermore, in the absence of negative bounds, it seems impossible to implement a function (or set of) returning a type-erased `Option<ClonerFn>`
- - How to provide a safe `Unsized` type in the absence of Custom DST? Is it even possible?
+ - How to provide cloning? Beyond `Clone` not being object-safe today, it also does not work with a raw memory area, furthermore, in the absence of negative bounds, it seems impossible to implement a function (or set of) returning a type-erased `Option<ClonerFn>`.
+ - How to provide a safe `?Sized` type in the absence of Custom DST? Is it even possible?
  - What does "sharing methods between definitions" mean, exactly?
  
