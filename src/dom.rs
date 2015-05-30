@@ -1,7 +1,7 @@
 //
 //  Alright let's implement that DOM's example
 //
-use rtti::{Class,DynClass};
+use rtti::{Class,DynClass,Clonable};
 use rtti::{DownCastRef,UpCast,UpCastRef};
 
 //  KLUDGE: should be automatically implemented
@@ -11,24 +11,38 @@ use internal::{ExtendTrait,ExtendStruct,FirstExtendTrait,FirstExtendStruct,Trait
 use std::boxed::Box;
 use std::collections::HashMap;
 
+//
+//  ClassNode
+//
+type ClassNode = DynClass<Node, NodeData, (Clonable)>;
 
 trait Node {}
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct NodeData {
-    parent: Option<Box<DynClass<Node, NodeData>>>,
-    first_child: Option<Box<DynClass<Node, NodeData>>>,
+    parent: Option<Box<ClassNode>>,
+    first_child: Option<Box<ClassNode>>,
 }
 
 impl Node for NodeData {}
 
-#[derive(Debug)]
+//
+//  ClassText
+//
+type ClassText = DynClass<Node, TextNode, (Clonable)>;
+
+#[derive(Clone, Debug)]
 struct TextNode {
     _first_parent: NodeData,
 }
 
 impl Node for TextNode {}
 
+
+//
+//  ClassElement
+//
+type ClassElement = DynClass<Element, ElementData, (Clonable)>;
 
 trait Element: Node {
     fn do_the_thing(&self);
@@ -37,7 +51,7 @@ trait Element: Node {
     fn after_set_attr(&mut self, _key: &str, _val: &str) {}
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct ElementData {
     _first_parent: NodeData,
     attrs: HashMap<String, String>,
@@ -59,7 +73,7 @@ impl Element for ElementData {
     fn do_the_thing(&self) { println!("ElementData is in da place!"); }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct HTMLImageElement {
     _first_parent: ElementData,
 }
@@ -77,7 +91,7 @@ impl Element for HTMLImageElement {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct HTMLVideoElement {
     _first_parent: ElementData,
     cross_origin: bool,
@@ -102,19 +116,19 @@ fn process_any_element<'a>(element: &'a Element) {
 }
 
 pub fn doit() {
-    let text_node: Box<DynClass<Node, TextNode>> = {
+    let text_node: Box<ClassText> = {
         let nd = NodeData { parent: None, first_child: None };
-        Box::new(Class::new(TextNode { _first_parent: nd })).into()
+        Box::new(Class::new(TextNode { _first_parent: nd }).into_clonable()).into()
     };
     println!("text_node built");
 
-    let video_element: Box<DynClass<Element, HTMLVideoElement>> = {
-        let tn: Box<DynClass<Node, NodeData>> = text_node.up_cast();
+    let video_element: Box<DynClass<Element, HTMLVideoElement, (Clonable)>> = {
+        let tn = text_node.up_cast();
         let nd = NodeData { parent: None, first_child: Some(tn) };
         let mut ed = ElementData { _first_parent: nd, attrs: HashMap::new() };
         ed.set_attribute("it is", "so used");
         let hve = HTMLVideoElement { _first_parent: ed, cross_origin: false };
-        Box::new(Class::new(hve)).into()
+        Box::new(Class::new(hve).into_clonable()).into()
     };
     println!("video_element built");
 
@@ -123,15 +137,17 @@ pub fn doit() {
     let child_node = video_element.as_struct()._first_parent._first_parent.first_child.as_ref().unwrap();
 
     for node in [child_node, video_element.up_cast_ref()].iter() {
-        if let Some(text) = { let t: Option<&DynClass<Node, TextNode>> = (*node).down_cast_ref(); t } {
+        if let Some(text) = { let t: Option<&ClassText> = (*node).down_cast_ref(); t } {
             println!("I got me some text node {:?}", &text);
-        } else if let Some(element) = { let t: Option<&DynClass<Element, ElementData>> = (*node).down_cast_ref(); t } {
+        } else if let Some(element) = { let t: Option<&ClassElement> = (*node).down_cast_ref(); t } {
             println!("I got me some element {:?}", &element);
             element.do_the_thing();
         } else {
             println!("Oh shoot, nothing I know!");
         }
     }
+
+    println!("I haz teh clone: {:?}", child_node.clone());
 }
 
 
@@ -215,12 +231,29 @@ pub fn register_struct_info(collector: &mut Vec<(internal::StructId, internal::S
     use internal::{StructId, StructInfo, TraitId, VTable, struct_id, v_table_by_id};
 
     fn make<S>(off: fn (StructId) -> &'static [isize]) -> (StructId, StructInfo)
-        where S: marker::Reflect + 'static
+        where S: Clone + marker::Reflect + 'static
     {
         fn v_table<S>(id: TraitId) -> Option<&'static VTable>
             where S: marker::Reflect + 'static
         {
             v_table_by_id(id, struct_id::<S>())
+        }
+
+        fn clone<S>(src: *const u8, dst: *mut u8) -> ()
+            where S: Clone
+        {
+            unsafe {
+                let original: &S = mem::transmute(src);
+
+                let clone = original.clone();
+
+                let src: *const S = mem::transmute(&clone);
+                let dst: *mut S = mem::transmute(dst);
+
+                ptr::copy_nonoverlapping(src, dst, mem::size_of::<S>());
+
+                mem::forget(clone);
+            }
         }
 
         fn drop<S>(raw: *mut ())
@@ -234,7 +267,7 @@ pub fn register_struct_info(collector: &mut Vec<(internal::StructId, internal::S
 
         (
             struct_id::<S>(),
-            StructInfo::new::<S>(v_table::<S>, off, drop::<S>)
+            StructInfo::new::<S>(v_table::<S>, off, Some(clone::<S>), drop::<S>)
         )
     } // make
 

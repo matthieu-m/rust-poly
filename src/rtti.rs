@@ -453,29 +453,36 @@ impl<'a, S, Y> VDataCast<VDataMut<'a, Y>, *mut u8> for VDataMut<'a, S>
 
 
 //
+//  Capacities: Clonable
+//
+#[derive(Copy, Clone, Debug)]
+pub struct Clonable;
+
+
+//
 //  Class, DynClass (& Dyn), DynRef, DynRefMut
 //
 #[repr(C)]
 #[derive(Debug)]
-pub struct Class<T: ?Sized, S>
+pub struct Class<T: ?Sized, S, CP>
     where T: marker::Reflect + 'static,
           S: ExtendTrait<T> + marker::Reflect + 'static,
 {
-    dyn: DynClass<T, S>,
+    dyn: DynClass<T, S, CP>,
     data: S,
 }
 
 #[repr(C)]
-pub struct DynClass<T: ?Sized, S>
+pub struct DynClass<T: ?Sized, S, CP>
     where T: marker::Reflect + 'static,
           S: marker::Reflect + 'static,
 {
     v_ref: VRef<T>,
     v_offset: VOffset,
-    _0: marker::PhantomData<S>,
+    _0: marker::PhantomData<(S, CP)>,
 }
 
-pub type Dyn<T> = DynClass<T, ()>;
+pub type Dyn<T> = DynClass<T, (), ()>;
 
 #[derive(Clone, Debug)]
 pub struct DynRef<'a, T: ?Sized, S>
@@ -498,11 +505,11 @@ pub struct DynRefMut<'a, T: ?Sized, S>
 //
 //  Class
 //
-impl<T: ?Sized, S> Class<T, S>
+impl<T: ?Sized, S> Class<T, S, ()>
     where T: marker::Reflect + 'static,
           S: ExtendTrait<T> + marker::Reflect + 'static,
 {
-    pub fn new(data: S) -> Class<T, S> {
+    pub fn new(data: S) -> Class<T, S, ()> {
         assert!(offset_of!(Self, dyn) == 0, "Essential for &Class -> &DynClass conversion!");
 
         let offset = offset_of!(Self, data);
@@ -527,16 +534,33 @@ impl<T: ?Sized, S> Class<T, S>
 
         Class { dyn: unsafe { DynClass::new(VRef::new::<S>(), v_offset) }, data: data }
     }
+
+    pub fn into_clonable(self) -> Class<T, S, (Clonable)>
+        where S: clone::Clone
+    {
+        let dyn = unsafe { DynClass::new(self.dyn.v_ref, self.dyn.v_offset) };
+        Class { dyn: dyn, data: self.data }
+    }
 } // impl Class
+
+impl<T: ?Sized, S, CP> clone::Clone for Class<T, S, CP>
+    where T: marker::Reflect + 'static,
+          S: ExtendTrait<T> + clone::Clone + marker::Reflect + 'static,
+{
+    fn clone(&self) -> Self {
+        let new_dyn = unsafe { DynClass::new(self.dyn.v_ref, self.dyn.v_offset) };
+        Class { dyn: new_dyn, data: self.data.clone() }
+    }
+}
 
 //
 //  DynClass
 //
-impl<T: ?Sized, S> DynClass<T, S>
+impl<T: ?Sized, S, CP> DynClass<T, S, CP>
     where T: marker::Reflect + 'static,
           S: marker::Reflect + 'static,
 {
-    unsafe fn new(v_ref: VRef<T>, v_offset: VOffset) -> DynClass<T, S> {
+    unsafe fn new(v_ref: VRef<T>, v_offset: VOffset) -> DynClass<T, S, CP> {
         DynClass { v_ref: v_ref, v_offset: v_offset, _0: marker::PhantomData }
     }
 
@@ -630,7 +654,51 @@ impl<T: ?Sized, S> DynClass<T, S>
     }
 } // impl DynClass
 
-impl<T: ?Sized, S> fmt::Debug for DynClass<T, S>
+impl<T: ?Sized, S> DynClass<T, S, (Clonable)>
+    where T: marker::Reflect + 'static,
+          S: marker::Reflect + 'static
+{
+    fn clone_to_box(&self) -> Box<DynClass<T, S, (Clonable)>> {
+        let struct_info = self.v_ref.struct_info();
+        assert!(struct_info.is_clonable(), "(Clonable) should have guaranteed that...");
+
+        //  Okay... so we need to estimate how much memory we will need for this,
+        //  and what the alignment of this memory should be.
+        let (size, align) = {
+            use core::cmp;
+
+            assert!(self.v_offset.base_offset() >= 0);
+
+            let size = self.v_offset.base_offset() as usize + struct_info.size();
+            let align = cmp::max(
+                mem::align_of::<DynClass<T, S, (Clonable)>>(),
+                (1_usize << struct_info.log2_align())
+            );
+            (size, align)
+        };
+
+        let original: &DynClass<T, S, (Clonable)> = &*self;
+
+        unsafe {
+            use alloc::heap;
+            use core::ptr;
+
+            let raw = heap::allocate(size, align);
+
+            let head    : *const u8 = mem::transmute(original);
+            let head_raw: *mut u8   = raw;
+            ptr::copy_nonoverlapping(head, head_raw, mem::size_of::<DynClass<T, S, (Clonable)>>());
+
+            let tail    : *const u8 = mem::transmute(original.base_ptr());
+            let tail_raw: *mut u8   = head_raw.offset(original.v_offset.offset());
+            struct_info.clone(tail, tail_raw);
+
+            mem::transmute(raw)
+        }
+    }
+}
+
+impl<T: ?Sized, S, CP> fmt::Debug for DynClass<T, S, CP>
     where T: marker::Reflect + 'static,
           S: fmt::Debug + marker::Reflect + 'static
 {
@@ -645,7 +713,7 @@ impl<T: ?Sized, S> fmt::Debug for DynClass<T, S>
     }
 } // impl Debug for DynClass
 
-impl<T: ?Sized, S> Drop for DynClass<T, S>
+impl<T: ?Sized, S, CP> Drop for DynClass<T, S, CP>
     where T: marker::Reflect + 'static,
           S: marker::Reflect + 'static,
 {
@@ -655,7 +723,7 @@ impl<T: ?Sized, S> Drop for DynClass<T, S>
     }
 }
 
-impl<T: ?Sized, S> ops::Deref for DynClass<T, S>
+impl<T: ?Sized, S, CP> ops::Deref for DynClass<T, S, CP>
     where T: marker::Reflect + 'static,
           S: marker::Reflect + 'static
 {
@@ -664,18 +732,27 @@ impl<T: ?Sized, S> ops::Deref for DynClass<T, S>
     fn deref(&self) -> &T { self.as_trait() }
 } // impl Deref
 
-impl<T: ?Sized, S> ops::DerefMut for DynClass<T, S>
+impl<T: ?Sized, S, CP> ops::DerefMut for DynClass<T, S, CP>
     where T: marker::Reflect + 'static,
           S: marker::Reflect + 'static
 {
     fn deref_mut(&mut self) -> &mut T { self.as_trait_mut() }
 } // impl DerefMut
 
-impl<T: ?Sized, S> convert::From<Box<Class<T, S>>> for Box<DynClass<T, S>>
+impl<T: ?Sized, S> clone::Clone for Box<DynClass<T, S, (Clonable)>>
+    where T: marker::Reflect + 'static,
+          S: marker::Reflect + 'static,
+{
+    fn clone(&self) -> Self {
+        self.clone_to_box()
+    }
+} // impl Clone
+
+impl<T: ?Sized, S, CP> convert::From<Box<Class<T, S, CP>>> for Box<DynClass<T, S, CP>>
     where T: marker::Reflect + 'static,
           S: ExtendTrait<T> + marker::Reflect + 'static,
 {
-    fn from(t: Box<Class<T, S>>) -> Box<DynClass<T, S>> {
+    fn from(t: Box<Class<T, S, CP>>) -> Box<DynClass<T, S, CP>> {
         unsafe { mem::transmute(t) }
     }
 }
@@ -683,20 +760,20 @@ impl<T: ?Sized, S> convert::From<Box<Class<T, S>>> for Box<DynClass<T, S>>
 //
 //  Casting
 //
-impl<T: ?Sized, S, B: ?Sized, P> UpCast<Box<DynClass<B, P>>> for Box<DynClass<T, S>>
+impl<T: ?Sized, S, B: ?Sized, P, CP> UpCast<Box<DynClass<B, P, CP>>> for Box<DynClass<T, S, CP>>
     where T: TraitExtendTrait<B> + marker::Reflect + 'static,
           S: ExtendStruct<P> + marker::Reflect + 'static,
           B: marker::Reflect + 'static,
           P: marker::Reflect + 'static,
 {
-    fn up_cast(self) -> Box<DynClass<B, P>> {
+    fn up_cast(self) -> Box<DynClass<B, P, CP>> {
         //  Compute new v_ref and offset
         let new_v_ref = self.v_ref.up_cast::<B>();
 
         let new_v_offset = self.up_cast_struct::<P>();
 
         //  Commit result
-        let mut s: Box<DynClass<B, P>> = unsafe { mem::transmute(self) };
+        let mut s: Box<DynClass<B, P, CP>> = unsafe { mem::transmute(self) };
         s.v_ref = new_v_ref;
         s.v_offset = new_v_offset;
 
@@ -704,43 +781,43 @@ impl<T: ?Sized, S, B: ?Sized, P> UpCast<Box<DynClass<B, P>>> for Box<DynClass<T,
     }
 }
 
-impl<T: ?Sized, S, B: ?Sized, P> UpCastRef<DynClass<B, P>> for DynClass<T, S>
+impl<T: ?Sized, S, B: ?Sized, P, CP> UpCastRef<DynClass<B, P, CP>> for DynClass<T, S, CP>
     where T: FirstExtendTrait<B> + marker::Reflect + 'static,
           S: FirstExtendStruct<P> + marker::Reflect + 'static,
           B: marker::Reflect + 'static,
           P: marker::Reflect + 'static,
 {
-    fn up_cast_ref(&self) -> &DynClass<B, P> {
+    fn up_cast_ref(&self) -> &DynClass<B, P, CP> {
         unsafe { mem::transmute(self) }
     }
 
-    fn up_cast_ref_mut(&mut self) -> &mut DynClass<B, P> {
+    fn up_cast_ref_mut(&mut self) -> &mut DynClass<B, P, CP> {
         unsafe { mem::transmute(self) }
     }
 }
 
-impl<T: ?Sized, S, B: ?Sized, P> UpCastRef<Box<DynClass<B, P>>> for Box<DynClass<T, S>>
+impl<T: ?Sized, S, B: ?Sized, P, CP> UpCastRef<Box<DynClass<B, P, CP>>> for Box<DynClass<T, S, CP>>
     where T: FirstExtendTrait<B> + marker::Reflect + 'static,
           S: FirstExtendStruct<P> + marker::Reflect + 'static,
           B: marker::Reflect + 'static,
           P: marker::Reflect + 'static,
 {
-    fn up_cast_ref(&self) -> &Box<DynClass<B, P>> {
+    fn up_cast_ref(&self) -> &Box<DynClass<B, P, CP>> {
         unsafe { mem::transmute(self) }
     }
 
-    fn up_cast_ref_mut(&mut self) -> &mut Box<DynClass<B, P>> {
+    fn up_cast_ref_mut(&mut self) -> &mut Box<DynClass<B, P, CP>> {
         unsafe { mem::transmute(self) }
     }
 }
 
-impl<T: ?Sized, S, D: ?Sized, C> DownCast<Box<DynClass<D, C>>> for Box<DynClass<T, S>>
+impl<T: ?Sized, S, D: ?Sized, C, CP> DownCast<Box<DynClass<D, C, CP>>> for Box<DynClass<T, S, CP>>
     where T: marker::Reflect + 'static,
           S: marker::Reflect + 'static,
           D: TraitExtendTrait<T> + marker::Reflect + 'static,
           C: FirstExtendStruct<S> + marker::Reflect + 'static,
 {
-    fn down_cast(self) -> Result<Box<DynClass<D, C>>, Box<DynClass<T, S>>> {
+    fn down_cast(self) -> Result<Box<DynClass<D, C, CP>>, Box<DynClass<T, S, CP>>> {
         //  Compute new v_ref and offset, while checking whether they do apply.
         let new_v_ref = self.v_ref.down_cast::<D>();
 
@@ -749,7 +826,7 @@ impl<T: ?Sized, S, D: ?Sized, C> DownCast<Box<DynClass<D, C>>> for Box<DynClass<
         //  Check whether the conversion makes sense,
         //  return the result appropriately.
         if let (Some(r), Some(o)) = (new_v_ref, new_v_offset) {
-            let mut s: Box<DynClass<D, C>> = unsafe { mem::transmute(self) };
+            let mut s: Box<DynClass<D, C, CP>> = unsafe { mem::transmute(self) };
             s.v_ref = r;
             s.v_offset = o;
             Ok(s)
@@ -758,14 +835,14 @@ impl<T: ?Sized, S, D: ?Sized, C> DownCast<Box<DynClass<D, C>>> for Box<DynClass<
         }
     }
 
-    unsafe fn unchecked_down_cast(self) -> Box<DynClass<D, C>> {
+    unsafe fn unchecked_down_cast(self) -> Box<DynClass<D, C, CP>> {
         //  Compute new v_ref and offset, while checking whether they do apply.
         let new_v_ref = self.v_ref.down_cast::<D>().unwrap();
 
         let new_v_offset = self.down_cast_struct::<C>().unwrap();
 
         //  Commit result
-        let mut s: Box<DynClass<D, C>> = mem::transmute(self);
+        let mut s: Box<DynClass<D, C, CP>> = mem::transmute(self);
         s.v_ref = new_v_ref;
         s.v_offset = new_v_offset;
 
@@ -773,13 +850,13 @@ impl<T: ?Sized, S, D: ?Sized, C> DownCast<Box<DynClass<D, C>>> for Box<DynClass<
     }
 }
 
-impl<T: ?Sized, S, D: ?Sized, C> DownCastRef<DynClass<D, C>> for DynClass<T, S>
+impl<T: ?Sized, S, D: ?Sized, C, CP> DownCastRef<DynClass<D, C, CP>> for DynClass<T, S, CP>
     where T: marker::Reflect + 'static,
           S: marker::Reflect + 'static,
           D: FirstExtendTrait<T> + TraitExtendTrait<T> + marker::Reflect + 'static,
           C: FirstExtendStruct<S> + marker::Reflect + 'static,
 {
-    fn down_cast_ref(&self) -> Option<&DynClass<D, C>> {
+    fn down_cast_ref(&self) -> Option<&DynClass<D, C, CP>> {
         let is_trait_ok = self.v_ref.down_cast::<D>().is_some();
 
         let is_struct_ok = self.down_cast_struct::<C>().is_some();
@@ -791,7 +868,7 @@ impl<T: ?Sized, S, D: ?Sized, C> DownCastRef<DynClass<D, C>> for DynClass<T, S>
         }
     }
 
-    fn down_cast_ref_mut(&mut self) -> Option<&mut DynClass<D, C>> {
+    fn down_cast_ref_mut(&mut self) -> Option<&mut DynClass<D, C, CP>> {
         let is_trait_ok = self.v_ref.down_cast::<D>().is_some();
 
         let is_struct_ok = self.down_cast_struct::<C>().is_some();
@@ -803,22 +880,22 @@ impl<T: ?Sized, S, D: ?Sized, C> DownCastRef<DynClass<D, C>> for DynClass<T, S>
         }
     }
 
-    unsafe fn unchecked_down_cast_ref(&self) -> &DynClass<D, C> {
+    unsafe fn unchecked_down_cast_ref(&self) -> &DynClass<D, C, CP> {
         mem::transmute(self)
     }
 
-    unsafe fn unchecked_down_cast_ref_mut(&mut self) -> &mut DynClass<D, C> {
+    unsafe fn unchecked_down_cast_ref_mut(&mut self) -> &mut DynClass<D, C, CP> {
         mem::transmute(self)
     }
 }
 
-impl<T: ?Sized, S, X: ?Sized, Y> Cast<Box<DynClass<X, Y>>> for Box<DynClass<T, S>>
+impl<T: ?Sized, S, X: ?Sized, Y, CP> Cast<Box<DynClass<X, Y, CP>>> for Box<DynClass<T, S, CP>>
     where T: marker::Reflect + 'static,
           S: marker::Reflect + 'static,
           X: marker::Reflect + 'static,
           Y: marker::Reflect + 'static,
 {
-    fn cast(self) -> Result<Box<DynClass<X, Y>>, Box<DynClass<T, S>>> {
+    fn cast(self) -> Result<Box<DynClass<X, Y, CP>>, Box<DynClass<T, S, CP>>> {
         let new_v_ref = self.v_ref.cast::<X>();
 
         let new_v_offset = self.cast_struct::<Y>();
@@ -826,7 +903,7 @@ impl<T: ?Sized, S, X: ?Sized, Y> Cast<Box<DynClass<X, Y>>> for Box<DynClass<T, S
         //  Check whether the conversion makes sense,
         //  return the result appropriately.
         if let (Some(r), Some(o)) = (new_v_ref, new_v_offset) {
-            let mut s: Box<DynClass<X, Y>> = unsafe { mem::transmute(self) };
+            let mut s: Box<DynClass<X, Y, CP>> = unsafe { mem::transmute(self) };
             s.v_ref = r;
             s.v_offset = o;
             Ok(s)
@@ -835,12 +912,12 @@ impl<T: ?Sized, S, X: ?Sized, Y> Cast<Box<DynClass<X, Y>>> for Box<DynClass<T, S
         }
     }
 
-    unsafe fn unchecked_cast(self) -> Box<DynClass<X, Y>> {
+    unsafe fn unchecked_cast(self) -> Box<DynClass<X, Y, CP>> {
         let new_v_ref = self.v_ref.cast::<X>().unwrap();
 
         let new_v_offset = self.cast_struct::<Y>().unwrap();
 
-        let mut s: Box<DynClass<X, Y>> = mem::transmute(self);
+        let mut s: Box<DynClass<X, Y, CP>> = mem::transmute(self);
         s.v_ref = new_v_ref;
         s.v_offset = new_v_offset;
         s
@@ -854,7 +931,7 @@ impl<'a, T: ?Sized, S> DynRef<'a, T, S>
     where T: marker::Reflect + 'static,
           S: marker::Reflect + 'static,
 {
-    pub fn new(c: &'a DynClass<T, S>) -> DynRef<'a, T, S>{
+    pub fn new<CP>(c: &'a DynClass<T, S, CP>) -> DynRef<'a, T, S>{
         let v_offset = VOffset::new(0, 0, c.offset_into_struct());
         DynRef {
             v_ref: c.v_ref,
@@ -880,7 +957,7 @@ impl<'a, T: ?Sized, S> DynRefMut<'a, T, S>
     where T: marker::Reflect + 'static,
           S: marker::Reflect + 'static,
 {
-    pub fn new(c: &'a mut DynClass<T, S>) -> DynRefMut<'a, T, S> {
+    pub fn new<CP>(c: &'a mut DynClass<T, S, CP>) -> DynRefMut<'a, T, S> {
         let v_offset = VOffset::new(0, 0, c.offset_into_struct());
         DynRefMut {
             v_ref: c.v_ref,
