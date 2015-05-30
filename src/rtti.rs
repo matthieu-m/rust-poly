@@ -757,6 +757,15 @@ impl<T: ?Sized, S, CP> convert::From<Box<Class<T, S, CP>>> for Box<DynClass<T, S
     }
 }
 
+impl<T: ?Sized, S> convert::From<Box<DynClass<T, S, (Clonable)>>> for Box<DynClass<T, S, ()>>
+    where T: marker::Reflect + 'static,
+          S: ExtendTrait<T> + marker::Reflect + 'static,
+{
+    fn from(t: Box<DynClass<T, S, (Clonable)>>) -> Box<DynClass<T, S, ()>> {
+        unsafe { mem::transmute(t) }
+    }
+}
+
 //
 //  Casting
 //
