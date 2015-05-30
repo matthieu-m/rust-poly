@@ -271,8 +271,7 @@ pub struct StructInfo {
     struct_id: StructId,
     v_table_getter: fn (TraitId) -> Option<&'static VTable>,
     offsets_getter: fn (StructId) -> &'static [isize],
-    //  FIXME: the Clone trait is not for now amenable to cloning in raw storage.
-    //  cloner: Option<fn (&mut (), *mut u8) -> ()>,
+    cloner: Option<fn (*const u8, *mut u8) -> ()>,
     dropper: fn (&mut ()) -> (),
 }
 
@@ -287,14 +286,12 @@ For each monomorphized `struct`, the compiler will emit a `StructInfo` in read-o
  - the ID of the `struct` is used to know the type of the object at run-time.
  - the `v_table_getter` function provides the `VTable` for all knowns traits this `struct` implements (at the point `StructInfo` is instantiated).
  - the `offsets_getter` function is the type-erased version of `ExtendStruct<P>::offsets`, for all `P` from which the current `struct` extends, and otherwise returns an empty array.
- - the `cloner` function should (later) provide a way to clone a type-erased type.
+ - the `cloner` function should provide a way to clone a type-erased type, it is optional, as it cannot be provided for types not implementing Clone.
  - the `dropper` function is the type-erased version of `drop`, its argument is a pointer to the first byte of the `struct`.
 
 As mentioned, this type should represent a "view" of read-only memory laid out by the compiler.
 
 > Note: a rational on the sufficiency of `v_table_getter` is provided in the `TraitInfo` section.
-
-> Unresolved question: How to provide cloning?
 
 ### Common Ancestor `()`
 
@@ -511,20 +508,19 @@ The `rtti::{Class,DynClass,Dyn}` types are introduced, their particular implemen
 
 ```rust
 #[repr(...)] // C ?
-struct Class<T, S>
+struct Class<T, S, CP>
     where T: trait,
           S: T,
 {
     // Exposure only
-    v_ptr: &'static VTable,
-    offset: isize,
+    dyn: DynClass<T, S, CP>,
     data: S,
 }
 
 //  FIXME: this type should be !Sized, this requires negative bounds
 //  FIXME: this type would benefit from the availability of support for custom DST
 #[repr(...)] // C ?
-struct DynClass<T, S>
+struct DynClass<T, S, CP>
     where T: trait,
 {
     // Exposure only
@@ -533,61 +529,95 @@ struct DynClass<T, S>
 }
 
 //  
-type Dyn<T> = DynClass<T, ()>;
+type Dyn<T> = DynClass<T, (), ()>;
 ```
 
 Some details:
 
  - It is intended for `DynClass` to be an dynamically sized prefix of `Class`.
- - `v_ptr` is the traditional pointer to the v-table, it is initialized to `v_table::<T0, S0>()` when `Class<T0, S0>` is first created; it always points to v-tables of `S0` throughout the lifetime of the instance, but jumps from `trait` to `trait` following the casts (of `DynClass`).
- - `offset` represents, at first, the `offset` of `data` in `Class<T0, S0>`, it is necessary to support `S0` types for which `mem::align_of::<S0>() > mem::align_of::<isize>()`; it jumps from `struct` to `struct` (always within the original confines of `Class<T0, S0>`) following the casts (of `DynClass`)
+ - `v_ptr` is the traditional pointer to the v-table, it is initialized to `v_table::<T0, S0>()` when `Class<T0, S0, ()>` is first created; it always points to v-tables of `S0` throughout the lifetime of the instance, but jumps from `trait` to `trait` following the casts (of `DynClass`).
+ - `offset` represents, at first, the `offset` of `data` in `Class<T0, S0, ()>`, it is necessary to support `S0` types for which `mem::align_of::<S0>() > mem::align_of::<isize>()`; it jumps from `struct` to `struct` (always within the original confines of `Class<T0, S0, ()>`) following the casts (of `DynClass`)
  - `data` is simply the piece of data.
 
 Invariants:
 
- - for any `DynClass<T, S>`, `self.v_ptr` points to a `VTable` for `trait T` (and the original `struct`)
- - for any `DynClass<T, S>`, `(&self as *const u8) + self.offset` points to an instance of `S`
+ - for any `DynClass<T, S, CP>`, `self.v_ptr` points to a `VTable` for `trait T` (and the original `struct`)
+ - for any `DynClass<T, S, CP>`, `(&self as *const u8) + self.offset` points to an instance of `S`
 
 as a result of those invariants, building a `&T` or a `&S` is cheap.
 
-> Goal Reached: thin pointers (`Box<DynClass<T, S>>`).
+> Goal Reached: thin pointers (`Box<DynClass<T, S, CP>>`).
 
 > Goal Reached: safe, i.e., doesn't require a bunch of transmutes or other unsafe code to be usable.
 
 > Note: since `offset` is necessary for large alignment support, this RFC makes the best of it and handles extending multiple `struct` at once without additional storage costs.
 
-> Note: `DynClass` cannot be directly constructed, instead an implementation of `convert::From` exists to convert from `Box<Class<T, S>>` to `Box<DynClass<T, S>>`.
+> Note: `DynClass` cannot be directly constructed, instead an implementation of `convert::From` exists to convert from `Box<Class<T, S, CP>>` to `Box<DynClass<T, S, CP>>`.
+
+### Capabilities: Clonable
+
+The `CP` parameter is the set of (statically known) capabilities of the type, represented as an ordered tuple. At the time of writing it can be either `()` or `(Clonable)`.
+
+For example, cloning is a very much desirable feature (when available), however:
+
+ - `Clone` is not object-safe, thus requiring `T: Clone` (where `T` is a trait) is not possible
+ - `DynClass` is a type-erased container, yet `Clone::clone` is not allowed to fail
+
+In order to statically represent the availability of the cloning feature, a set of known capabilities is carried by `Class` and `DynClass`. They can be established:
+
+ - by `Class`, for example `Class<T, S: Clone, ()>::into_clonable() -> Class<T, S, (Clonable)>`; and all checks occur at compile-time.
+ - by `Box<DynClass<..>>`, although this requires a run-time check and thus may fail.
+
+An instance of `DynClass` with the `Clonable` capability provides a supplementary method, and implements `Clone`:
+
+```rust
+impl<T, S> DynClass<T, S, (Clonable)>
+    where T: trait
+{
+    pub fn clone_to_box(&self) -> Box<DynClass<T, S, (Clonable)>>;
+}
+
+impl<T, S> Clone for Box<DynClass<T, S, (Clonable)>>
+    where T: trait
+{
+    fn clone(&self) -> Self {
+        self.clone_to_box()
+    }
+}
+```
+
+> Note: should the set of capabilities grow, strategies to mitigate the combinatorial explosion of cases will be necessary. Implicit conversion to a lesser set is one such strategy, though it might not be ideal.
 
 ### Casts
 
 The various `*Cast*` traits are implemented for `Box<DynClass<T, S>>`:
 
 ```rust
-impl<T, S, B, P> UpCast<Box<DynClass<B, P>>> for Box<DynClass<T, S>>
+impl<T, S, B, P, CP> UpCast<Box<DynClass<B, P, CP>>> for Box<DynClass<T, S, CP>>
     where T: B + trait + marker::Reflect + 'static,
           S: P + marker::Reflect + 'static,
           B: trait + marker::Reflect + 'static,
           P: marker::Reflect + 'static;
 
-impl<T, S, B, P> UpCastRef<DynClass<B, P>> for DynClass<T, S>
+impl<T, S, B, P, CP> UpCastRef<DynClass<B, P, CP>> for DynClass<T, S, CP>
     where T: FirstExtendTrait<B> + marker::Reflect + 'static,
           S: FirstExtendStruct<P> + marker::Reflect + 'static,
           B: marker::Reflect + 'static,
           P: marker::Reflect + 'static;
 
-impl<T, S, D, C> DownCast<Box<DynClass<D, C>>> for Box<DynClass<T, S>>
+impl<T, S, D, C, CP> DownCast<Box<DynClass<D, C, CP>>> for Box<DynClass<T, S, CP>>
     where T: trait + marker::Reflect + 'static,
           S: marker::Reflect + 'static,
           D: T + trait + marker::Reflect + 'static,
           C: FirstExtendStruct<S> + marker::Reflect + 'static;
 
-impl<T, S, D, C> DownCastRef<DynClass<D, C>> for DynClass<T, S>
+impl<T, S, D, C, CP> DownCastRef<DynClass<D, C, CP>> for DynClass<T, S, CP>
     where T: trait + marker::Reflect + 'static,
           S: marker::Reflect + 'static,
           D: FirstExtendTrait<T> + marker::Reflect + 'static,
           C: FirstExtendStruct<S> + marker::Reflect + 'static;
 
-impl<T, S, X, Y> Cast<Box<DynClass<X, Y>>> for Box<DynClass<T, S>>
+impl<T, S, X, Y, CP> Cast<Box<DynClass<X, Y, CP>>> for Box<DynClass<T, S, CP>>
     where T: trait + marker::Reflect + 'static,
           S: marker::Reflect + 'static,
           X: trait + marker::Reflect + 'static,
@@ -606,7 +636,7 @@ A prototype implementation can be seen on rust-poly; an excerpt is presented her
 
 which illustrates the support of efficient up-casts, as the result of `<T as TraitExtendTrait<B>>::offset()` can be computed at compile-time (providing `offset` is inlined).
 
-> Note: the extra restrictions imposed on `UpCastRef` and `DownCastRef` apply any time the content pointed to is immutable; for example, it would apply to `Rc<DynClass<T, S>>`; this cannot be worked around by using `Rc<RefCell<DynClass<T, S>>>` (or any other run-time mutability enabler) as the `*Cast` traits consume their inputs.
+> Note: the extra restrictions imposed on `UpCastRef` and `DownCastRef` apply any time the content pointed to is immutable; for example, it would apply to `Rc<DynClass<T, S, CP>>`; this cannot be worked around by using `Rc<RefCell<DynClass<T, S, CP>>>` (or any other run-time mutability enabler) as the `*Cast` traits consume their inputs.
 
 
 ## Fat Pointers/References
@@ -614,7 +644,7 @@ which illustrates the support of efficient up-casts, as the result of `<T as Tra
 Why?
 
  - `&T` does not provide direct access to fields
- - `&DynClass<T, S>` does not provide access to *other* fields
+ - `&DynClass<T, S, CP>` does not provide access to *other* fields
 
 ### `DynRef` and `DynRefMut`
 
@@ -650,21 +680,28 @@ Those references can be pointed at any existing storage, borrowing it, and allow
 Let us now how an example of a simple DOM would look like given those facilities, as it is the reference example used by the existing RFCs.
 
 ```rust
+type ClassNode = DynClass<Node, NodeData, (Clonable)>;
+
 trait Node {}
 
 #[derive(Debug)]
 struct NodeData {
-    parent: Option<Box<DynClass<Node, NodeData>>>,
-    first_child: Option<Box<DynClass<Node, NodeData>>>,
+    parent: Option<Box<ClassNode>>,
+    first_child: Option<Box<ClassNode>>,
 }
 
 impl Node for NodeData {}
+
+
+type ClassText = DynClass<Node, TextNode, (Clonable)>;
 
 #[derive(Debug)]
 struct TextNode: NodeData {}
 
 impl Node for TextNode {}
 
+
+type ClassElement = DynClass<Element, ElementData, (Clonable)>;
 
 trait Element: Node {
     fn do_the_thing(&self);
@@ -733,33 +770,31 @@ fn process_any_element<'a>(element: &'a Element) {
 }
 
 pub fn doit() {
-    type Node = DynClass<Node, NodeData>>;
-    type Text = DynClass<Node, TextNode>;
-    type Element = DynClass<Element, ElementData>;
-
-    let text_node: Box<Node> = {
+    let text_node: Box<ClassNode> = {
         let nd = NodeData { parent: None, first_child: None };
-        Box::new(Class::new(TextNode { NodeData: nd })).into().up_cast()
+        Box::new(Class::new(TextNode { NodeData: nd }).into_clonable()).into().up_cast()
     };
 
-    let video_element: Box<Element> = {
+    let video_element: Box<ClassElement> = {
         let nd = NodeData { parent: None, first_child: Some(text_node) };
         let ed = ElementData { NodeData: nd, attrs: HashMap::new() };
         let hve = HTMLVideoElement { ElementData: ed, cross_origin: false };
-        Box::new(Class::new(hve)).into().up_cast()
+        Box::new(Class::new(hve).into_clonable()).into().up_cast()
     };
 
     process_any_element((*video_element).as_trait());
 
     let node = (video_element.as_struct() as &NodeData).first_child.as_ref().unwrap();
 
-    if let Some(text) = { let t: Option<&Text> = (*node).down_cast_ref(); t } {
+    if let Some(text) = { let t: Option<&Box<ClassText>> = (*node).down_cast_ref(); t } {
         println!("I got me some text node {:?}", &text);
-    } else if let Some(element) = { let t: Option<&Box<Element>> = (*node).down_cast_ref(); t } {
+    } else if let Some(element) = { let t: Option<&Box<ClassElement>> = (*node).down_cast_ref(); t } {
         println!("I got me some element {:?}", &element);
     } else {
         println!("Oh shoot, nothing I know!");
     }
+
+    println!("I haz teh clone: {:?}", node.clone());
 }
 ```
 
@@ -935,7 +970,6 @@ Compared to the Internal Vtable (#250), this RFC once again avoids enforcing tha
 # Unresolved Questions
 
  - Could `DownCastRef` and `UpCastRef` be supplanted by implementing the regular `DownCast`/`UpCast` on references instead?
- - How to provide cloning? Beyond `Clone` not being object-safe today, it also does not work with a raw memory area, furthermore, in the absence of negative bounds, it seems impossible to implement a function (or set of) returning a type-erased `Option<ClonerFn>`.
  - How to provide a safe `?Sized` type in the absence of Custom DST? Is it even possible?
  - What does "sharing methods between definitions" mean, exactly?
  
