@@ -138,7 +138,7 @@ impl SecondParent() {
     fn increment(&mut self) { self.a += 1; }
 }
 
-struct Child: FirstParent + pub SecondParent {
+struct Child: FirstParent + SecondParent {
     // other attributes
 }
 
