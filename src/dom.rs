@@ -223,7 +223,7 @@ pub fn register_struct_info(collector: &mut Vec<(internal::StructId, internal::S
             v_table_by_id(id, struct_id::<S>())
         }
 
-        fn drop<S>(raw: &mut ())
+        fn drop<S>(raw: *mut ())
             where S: marker::Reflect + 'static
         {
             unsafe {

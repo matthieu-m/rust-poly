@@ -212,7 +212,7 @@ pub fn v_table_by_id(trait_id: TraitId, struct_id: StructId) -> Option<&'static 
     fn locate_vtable(registry: &'static VTableRegistry, id: Id, offset: isize) -> Option<&'static VTable> {
         for &(k_id, ref array) in &*registry.tables {
             if k_id != id { continue; }
-            
+
             return Some(unsafe {
                 let base: *const u8 = mem::transmute(array.get_unchecked(0));
                 let v_table: &'static VTable = mem::transmute(base.offset(offset));
@@ -265,7 +265,7 @@ pub struct StructInfo {
     offsets_getter: fn (StructId) -> &'static [isize],
     //  FIXME: the Clone trait is not for now amenable to cloning in raw storage.
     //  cloner: Option<fn (&mut (), *mut u8) -> ()>,
-    dropper: fn (&mut ()) -> (),
+    dropper: fn (*mut ()) -> (),
 }
 
 #[repr(C)]
@@ -282,13 +282,13 @@ pub struct VTable {
 }
 
 impl StructInfo {
-    const ALIGN_MASK: u64 = 18374686479671623680_u64;
+    const ALIGN_MASK: u64 = 72057594037927935_u64;
     const ALIGN_SHIFT: u64 = 56;
 
     pub fn new<S>(
         vt: fn (TraitId) -> Option<&'static VTable>,
         off: fn (StructId) -> &'static [isize],
-        drop: fn (&mut ()) -> ()
+        drop: fn (*mut ()) -> ()
     ) -> StructInfo
         where S: marker::Reflect + 'static
     {
@@ -314,7 +314,7 @@ impl StructInfo {
         }
     }
 
-    pub fn size(&self) -> usize { (self.size_align & !StructInfo::ALIGN_MASK) as usize }
+    pub fn size(&self) -> usize { (self.size_align & StructInfo::ALIGN_MASK) as usize }
 
     pub fn log2_align(&self) -> usize { (self.size_align >> StructInfo::ALIGN_SHIFT) as usize }
 
@@ -328,7 +328,7 @@ impl StructInfo {
         (self.offsets_getter)(id)
     }
 
-    pub fn drop(&self, data: &mut ()) {
+    pub fn drop(&self, data: *mut ()) {
         (self.dropper)(data)
     }
 } // impl StructInfo
@@ -372,7 +372,7 @@ impl fmt::Debug for TraitInfo {
     }
 } // impl Debug for TraitInfo
 
-impl VTable {   
+impl VTable {
     pub fn new<T: ?Sized, S>(table: *mut ()) -> VTable
         where T: marker::Reflect + 'static,
               S: ExtendTrait<T> + marker::Reflect + 'static,
