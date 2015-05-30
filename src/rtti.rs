@@ -658,7 +658,7 @@ impl<T: ?Sized, S> DynClass<T, S, (Clonable)>
     where T: marker::Reflect + 'static,
           S: marker::Reflect + 'static
 {
-    fn clone_to_box(&self) -> Box<DynClass<T, S, (Clonable)>> {
+    pub fn clone_to_box(&self) -> Box<DynClass<T, S, (Clonable)>> {
         let struct_info = self.v_ref.struct_info();
         assert!(struct_info.is_clonable(), "(Clonable) should have guaranteed that...");
 
