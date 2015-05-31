@@ -1,7 +1,7 @@
 //
 //  Alright let's implement that DOM's example
 //
-use rtti::{Class,DynClass,Clonable};
+use rtti::{Class,DynClass};
 use rtti::{DownCastRef,UpCast,UpCastRef};
 
 //  KLUDGE: should be automatically implemented
@@ -14,9 +14,9 @@ use std::collections::HashMap;
 //
 //  ClassNode
 //
-type ClassNode = DynClass<Node, NodeData, (Clonable)>;
+type ClassNode = DynClass<Node, NodeData>;
 
-trait Node {}
+trait Node: internal::RawClone {}
 
 #[derive(Clone, Debug)]
 struct NodeData {
@@ -29,7 +29,7 @@ impl Node for NodeData {}
 //
 //  ClassText
 //
-type ClassText = DynClass<Node, TextNode, (Clonable)>;
+type ClassText = DynClass<Node, TextNode>;
 
 #[derive(Clone, Debug)]
 struct TextNode {
@@ -42,7 +42,7 @@ impl Node for TextNode {}
 //
 //  ClassElement
 //
-type ClassElement = DynClass<Element, ElementData, (Clonable)>;
+type ClassElement = DynClass<Element, ElementData>;
 
 trait Element: Node {
     fn do_the_thing(&self);
@@ -118,17 +118,17 @@ fn process_any_element<'a>(element: &'a Element) {
 pub fn doit() {
     let text_node: Box<ClassText> = {
         let nd = NodeData { parent: None, first_child: None };
-        Box::new(Class::new(TextNode { _first_parent: nd }).into_clonable()).into()
+        Box::new(Class::new(TextNode { _first_parent: nd })).into()
     };
     println!("text_node built");
 
-    let video_element: Box<DynClass<Element, HTMLVideoElement, (Clonable)>> = {
+    let video_element: Box<DynClass<Element, HTMLVideoElement>> = {
         let tn = text_node.up_cast();
         let nd = NodeData { parent: None, first_child: Some(tn) };
         let mut ed = ElementData { _first_parent: nd, attrs: HashMap::new() };
         ed.set_attribute("it is", "so used");
         let hve = HTMLVideoElement { _first_parent: ed, cross_origin: false };
-        Box::new(Class::new(hve).into_clonable()).into()
+        Box::new(Class::new(hve)).into()
     };
     println!("video_element built");
 
@@ -231,29 +231,12 @@ pub fn register_struct_info(collector: &mut Vec<(internal::StructId, internal::S
     use internal::{StructId, StructInfo, TraitId, VTable, struct_id, v_table_by_id};
 
     fn make<S>(off: fn (StructId) -> &'static [isize]) -> (StructId, StructInfo)
-        where S: Clone + marker::Reflect + 'static
+        where S: marker::Reflect + 'static
     {
         fn v_table<S>(id: TraitId) -> Option<&'static VTable>
             where S: marker::Reflect + 'static
         {
             v_table_by_id(id, struct_id::<S>())
-        }
-
-        fn clone<S>(src: *const u8, dst: *mut u8) -> ()
-            where S: Clone
-        {
-            unsafe {
-                let original: &S = mem::transmute(src);
-
-                let clone = original.clone();
-
-                let src: *const S = mem::transmute(&clone);
-                let dst: *mut S = mem::transmute(dst);
-
-                ptr::copy_nonoverlapping(src, dst, mem::size_of::<S>());
-
-                mem::forget(clone);
-            }
         }
 
         fn drop<S>(raw: *mut ())
@@ -267,7 +250,7 @@ pub fn register_struct_info(collector: &mut Vec<(internal::StructId, internal::S
 
         (
             struct_id::<S>(),
-            StructInfo::new::<S>(v_table::<S>, off, Some(clone::<S>), drop::<S>)
+            StructInfo::new::<S>(v_table::<S>, off, drop::<S>)
         )
     } // make
 

@@ -6,6 +6,7 @@
 #![allow(dead_code)]
 
 use alloc::boxed::Box;
+use core::clone;
 use core::fmt;
 use core::intrinsics;
 use core::marker;
@@ -13,6 +14,36 @@ use core::mem;
 
 // KLUDGE
 use std;
+
+//
+//  Core Library additions
+//
+
+//  Addition to core::clone library
+pub trait RawClone {
+    //  Will write mem::size_of::<Self>() bytes in dst:
+    //  - dst will be overwritten, no destructor will run,
+    //  - dst should be big enough,
+    //  - dst should not overlap with self.
+    unsafe fn raw_clone(&self, dst: *mut u8);
+}
+
+impl<T> RawClone for T
+    where T: clone::Clone + Sized
+{
+    unsafe fn raw_clone(&self, dst: *mut u8) {
+        use core::ptr;
+
+        let clone = self.clone();
+
+        let src: *const Self = mem::transmute(&clone);
+        let dst: *mut Self = mem::transmute(dst);
+
+        ptr::copy_nonoverlapping(src, dst, 1);
+
+        mem::forget(clone);
+    }
+}
 
 //
 //  Helpers
@@ -263,7 +294,6 @@ pub struct StructInfo {
     struct_id: StructId,
     v_table_getter: fn (TraitId) -> Option<&'static VTable>,
     offsets_getter: fn (StructId) -> &'static [isize],
-    cloner: Option<fn (*const u8, *mut u8) -> ()>,
     dropper: fn (*mut ()) -> (),
 }
 
@@ -287,7 +317,6 @@ impl StructInfo {
     pub fn new<S>(
         vt: fn (TraitId) -> Option<&'static VTable>,
         off: fn (StructId) -> &'static [isize],
-        clon: Option<fn (*const u8, *mut u8) -> ()>,
         drop: fn (*mut ()) -> ()
     ) -> StructInfo
         where S: marker::Reflect + 'static
@@ -310,7 +339,6 @@ impl StructInfo {
             struct_id: struct_id::<S>(),
             v_table_getter: vt,
             offsets_getter: off,
-            cloner: clon,
             dropper: drop,
         }
     }
@@ -327,15 +355,6 @@ impl StructInfo {
 
     pub fn offsets(&self, id: StructId) -> &'static [isize] {
         (self.offsets_getter)(id)
-    }
-
-    pub fn is_clonable(&self) -> bool { self.cloner.is_some() }
-
-    //  Prerequisite: self.is_clonable() is true
-    //  Note: in any other crate than the core::clone::Clone one, the impl is in the struct crate,
-    //        and therefore self.is_clonable() is true if, unsurprisingly, `impl Clone for S`.
-    pub fn clone(&self, src: *const u8, dst: *mut u8) {
-        (self.cloner.unwrap())(src, dst)
     }
 
     pub fn drop(&self, data: *mut ()) {
