@@ -823,9 +823,9 @@ pub fn doit() {
 
     let node = (video_element.as_struct() as &NodeData).first_child.as_ref().unwrap();
 
-    if let Some(text) = { let t: Option<&Box<ClassText>> = (*node).down_cast_ref(); t } {
+    if let Some(text) = down_cast!((*node) => ref ClassText) {
         println!("I got me some text node {:?}", &text);
-    } else if let Some(element) = { let t: Option<&Box<ClassElement>> = (*node).down_cast_ref(); t } {
+    } else if let Some(element) = down_cast!((*node) => ref ClassElement) {
         println!("I got me some element {:?}", &element);
     } else {
         println!("Oh shoot, nothing I know!");
@@ -835,7 +835,7 @@ pub fn doit() {
 }
 ```
 
-> Note: It appears that support for "in-flight" type ascriptions is lacking today, leading to those ugly "if let" expressions.
+> Note: the `down_cast!` macro is a straightforward macro implemented in rust-poly which eases in-flight casts by expanding to a block in which a type ascription occurs. This RFC does not discuss its inclusion, it can be added easily enough later on.
 
 
 ## Goal Check
