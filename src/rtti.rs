@@ -56,6 +56,25 @@ pub trait Cast<Target> {
     unsafe fn unchecked_cast(self) -> Target;
 }
 
+#[macro_export]
+macro_rules! up_cast(
+    ($t:expr => ref mut $T:ty) => { { let tmp: &mut $T = $t.up_cast_ref_mut(); tmp } };
+    ($t:expr => ref $T:ty) => { { let tmp: & $T = $t.up_cast_ref(); tmp } };
+    ($t:expr => $T:ty) => { { let tmp: $T = $t.up_cast(); tmp } };
+);
+
+#[macro_export]
+macro_rules! down_cast(
+    ($t:expr => ref mut $T:ty) => { { let tmp: Option<&mut $T> = $t.down_cast_ref_mut(); tmp } };
+    ($t:expr => ref $T:ty) => { { let tmp: Option<&$T> = $t.down_cast_ref(); tmp } };
+    ($t:expr => $T:ty) => { { let tmp: Result<$T, _> = $t.down_cast(); tmp } };
+);
+
+#[macro_export]
+macro_rules! cast(
+    ($t:expr => $T:ty) => { { let tmp: Result<$T, _> = $t.cast(); tmp } };
+);
+
 //  If Cast is restricted to cross-casts, then CastRef makes little sense...
 //  ... to have a shareable v-ptr, two traits must be related.
 

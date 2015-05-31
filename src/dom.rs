@@ -137,9 +137,9 @@ pub fn doit() {
     let child_node = video_element.as_struct()._first_parent._first_parent.first_child.as_ref().unwrap();
 
     for node in [child_node, video_element.up_cast_ref()].iter() {
-        if let Some(text) = { let t: Option<&ClassText> = (*node).down_cast_ref(); t } {
+        if let Some(text) = down_cast!((*node) => ref ClassText) {
             println!("I got me some text node {:?}", &text);
-        } else if let Some(element) = { let t: Option<&ClassElement> = (*node).down_cast_ref(); t } {
+        } else if let Some(element) = down_cast!((*node) => ref ClassElement) {
             println!("I got me some element {:?}", &element);
             element.do_the_thing();
         } else {

@@ -4,6 +4,7 @@
 
 #[macro_use]
 mod internal;
+#[macro_use]
 mod rtti;
 mod dom;
 
