@@ -508,19 +508,19 @@ The `rtti::{Class,DynClass,Dyn}` types are introduced, their particular implemen
 
 ```rust
 #[repr(...)] // C ?
-struct Class<T, S, CP>
+struct Class<T, S>
     where T: trait,
           S: T,
 {
     // Exposure only
-    dyn: DynClass<T, S, CP>,
+    dyn: DynClass<T, S>,
     data: S,
 }
 
 //  FIXME: this type should be !Sized, this requires negative bounds
 //  FIXME: this type would benefit from the availability of support for custom DST
 #[repr(...)] // C ?
-struct DynClass<T, S, CP>
+struct DynClass<T, S>
     where T: trait,
 {
     // Exposure only
@@ -529,95 +529,61 @@ struct DynClass<T, S, CP>
 }
 
 //  
-type Dyn<T> = DynClass<T, (), ()>;
+type Dyn<T> = DynClass<T, ()>;
 ```
 
 Some details:
 
  - It is intended for `DynClass` to be an dynamically sized prefix of `Class`.
- - `v_ptr` is the traditional pointer to the v-table, it is initialized to `v_table::<T0, S0>()` when `Class<T0, S0, ()>` is first created; it always points to v-tables of `S0` throughout the lifetime of the instance, but jumps from `trait` to `trait` following the casts (of `DynClass`).
- - `offset` represents, at first, the `offset` of `data` in `Class<T0, S0, ()>`, it is necessary to support `S0` types for which `mem::align_of::<S0>() > mem::align_of::<isize>()`; it jumps from `struct` to `struct` (always within the original confines of `Class<T0, S0, ()>`) following the casts (of `DynClass`)
+ - `v_ptr` is the traditional pointer to the v-table, it is initialized to `v_table::<T0, S0>()` when `Class<T0, S0>` is first created; it always points to v-tables of `S0` throughout the lifetime of the instance, but jumps from `trait` to `trait` following the casts (of `DynClass`).
+ - `offset` represents, at first, the `offset` of `data` in `Class<T0, S0>`, it is necessary to support `S0` types for which `mem::align_of::<S0>() > mem::align_of::<isize>()`; it jumps from `struct` to `struct` (always within the original confines of `Class<T0, S0>`) following the casts (of `DynClass`)
  - `data` is simply the piece of data.
 
 Invariants:
 
- - for any `DynClass<T, S, CP>`, `self.v_ptr` points to a `VTable` for `trait T` (and the original `struct`)
- - for any `DynClass<T, S, CP>`, `(&self as *const u8) + self.offset` points to an instance of `S`
+ - for any `DynClass<T, S>`, `self.v_ptr` points to a `VTable` for `trait T` (and the original `struct`)
+ - for any `DynClass<T, S>`, `(&self as *const u8) + self.offset` points to an instance of `S`
 
 as a result of those invariants, building a `&T` or a `&S` is cheap.
 
-> Goal Reached: thin pointers (`Box<DynClass<T, S, CP>>`).
+> Goal Reached: thin pointers (`Box<DynClass<T, S>>`).
 
 > Goal Reached: safe, i.e., doesn't require a bunch of transmutes or other unsafe code to be usable.
 
 > Note: since `offset` is necessary for large alignment support, this RFC makes the best of it and handles extending multiple `struct` at once without additional storage costs.
 
-> Note: `DynClass` cannot be directly constructed, instead an implementation of `convert::From` exists to convert from `Box<Class<T, S, CP>>` to `Box<DynClass<T, S, CP>>`.
-
-### Capabilities: Clonable
-
-The `CP` parameter is the set of (statically known) capabilities of the type, represented as an ordered tuple. At the time of writing it can be either `()` or `(Clonable)`.
-
-For example, cloning is a very much desirable feature (when available), however:
-
- - `Clone` is not object-safe, thus requiring `T: Clone` (where `T` is a trait) is not possible
- - `DynClass` is a type-erased container, yet `Clone::clone` is not allowed to fail
-
-In order to statically represent the availability of the cloning feature, a set of known capabilities is carried by `Class` and `DynClass`. They can be established:
-
- - by `Class`, for example `Class<T, S: Clone, ()>::into_clonable() -> Class<T, S, (Clonable)>`; and all checks occur at compile-time.
- - by `Box<DynClass<..>>`, although this requires a run-time check and thus may fail.
-
-An instance of `DynClass` with the `Clonable` capability provides a supplementary method, and implements `Clone`:
-
-```rust
-impl<T, S> DynClass<T, S, (Clonable)>
-    where T: trait
-{
-    pub fn clone_to_box(&self) -> Box<DynClass<T, S, (Clonable)>>;
-}
-
-impl<T, S> Clone for Box<DynClass<T, S, (Clonable)>>
-    where T: trait
-{
-    fn clone(&self) -> Self {
-        self.clone_to_box()
-    }
-}
-```
-
-> Note: should the set of capabilities grow, strategies to mitigate the combinatorial explosion of cases will be necessary. Implicit conversion to a lesser set is one such strategy, though it might not be ideal.
+> Note: `DynClass` cannot be directly constructed, instead an implementation of `convert::From` exists to convert from `Box<Class<T, S>>` to `Box<DynClass<T, S>>`.
 
 ### Casts
 
 The various `*Cast*` traits are implemented for `Box<DynClass<T, S>>`:
 
 ```rust
-impl<T, S, B, P, CP> UpCast<Box<DynClass<B, P, CP>>> for Box<DynClass<T, S, CP>>
+impl<T, S, B, P> UpCast<Box<DynClass<B, P>>> for Box<DynClass<T, S>>
     where T: B + trait + marker::Reflect + 'static,
           S: P + marker::Reflect + 'static,
           B: trait + marker::Reflect + 'static,
           P: marker::Reflect + 'static;
 
-impl<T, S, B, P, CP> UpCastRef<DynClass<B, P, CP>> for DynClass<T, S, CP>
+impl<T, S, B, P> UpCastRef<DynClass<B, P>> for DynClass<T, S>
     where T: FirstExtendTrait<B> + marker::Reflect + 'static,
           S: FirstExtendStruct<P> + marker::Reflect + 'static,
           B: marker::Reflect + 'static,
           P: marker::Reflect + 'static;
 
-impl<T, S, D, C, CP> DownCast<Box<DynClass<D, C, CP>>> for Box<DynClass<T, S, CP>>
+impl<T, S, D, C> DownCast<Box<DynClass<D, C>>> for Box<DynClass<T, S>>
     where T: trait + marker::Reflect + 'static,
           S: marker::Reflect + 'static,
           D: T + trait + marker::Reflect + 'static,
           C: FirstExtendStruct<S> + marker::Reflect + 'static;
 
-impl<T, S, D, C, CP> DownCastRef<DynClass<D, C, CP>> for DynClass<T, S, CP>
+impl<T, S, D, C> DownCastRef<DynClass<D, C>> for DynClass<T, S>
     where T: trait + marker::Reflect + 'static,
           S: marker::Reflect + 'static,
           D: FirstExtendTrait<T> + marker::Reflect + 'static,
           C: FirstExtendStruct<S> + marker::Reflect + 'static;
 
-impl<T, S, X, Y, CP> Cast<Box<DynClass<X, Y, CP>>> for Box<DynClass<T, S, CP>>
+impl<T, S, X, Y> Cast<Box<DynClass<X, Y>>> for Box<DynClass<T, S>>
     where T: trait + marker::Reflect + 'static,
           S: marker::Reflect + 'static,
           X: trait + marker::Reflect + 'static,
@@ -636,7 +602,58 @@ A prototype implementation can be seen on rust-poly; an excerpt is presented her
 
 which illustrates the support of efficient up-casts, as the result of `<T as TraitExtendTrait<B>>::offset()` can be computed at compile-time (providing `offset` is inlined).
 
-> Note: the extra restrictions imposed on `UpCastRef` and `DownCastRef` apply any time the content pointed to is immutable; for example, it would apply to `Rc<DynClass<T, S, CP>>`; this cannot be worked around by using `Rc<RefCell<DynClass<T, S, CP>>>` (or any other run-time mutability enabler) as the `*Cast` traits consume their inputs.
+> Note: the extra restrictions imposed on `UpCastRef` and `DownCastRef` apply any time the content pointed to is immutable; for example, it would apply to `Rc<DynClass<T, S>>`; this cannot be worked around by using `Rc<RefCell<DynClass<T, S>>>` (or any other run-time mutability enabler) as the `*Cast` traits consume their inputs.
+
+### RawClone
+
+Cloning is a very much desirable feature (when available), however:
+
+ - `Clone` is not object-safe, thus requiring `T: Clone` (where `T` is a trait) is not possible
+ - `DynClass` is a type-erased container, so whether the original `S0` could be cloned is unknown, yet `Clone::clone` is not allowed to fail
+
+This RFC proposes the inclusion of a new trait in `core::clone`: `RawClone`.
+
+```rust
+pub trait RawClone {
+    //  Will write mem::size_of::<Self>() bytes in dst:
+    //  - dst will be overwritten, no destructor will run,
+    //  - dst should be big enough,
+    //  - dst should not overlap with self.
+    unsafe fn raw_clone(&self, dst: *mut u8);
+}
+
+impl<T> RawClone for T
+    where T: clone::Clone + Sized
+{
+    unsafe fn raw_clone(&self, dst: *mut u8);   // an example implementation is available in rust-poly
+}
+```
+
+This trait is a low-level object-safe version of `Clone`, and is implemented by default by any type implementing `Clone`, so that its inclusion is transparent to the users.
+
+In turn, it allows static detection of whether cloning is possible (or not) in a type-erased scenario:
+
+```rust
+impl<T, S> DynClass<T, S>
+    where T: RawClone + trait,
+          S: T
+{
+    pub fn clone_to_box(&self) -> Box<DynClass<T, S>>;
+}
+
+impl<T, S> clone::Clone for Box<DynClass<T, S>>
+    where T: RawClone + trait,
+          S: T,
+{
+    fn clone(&self) -> Self { self.clone_to_box() }
+} // impl Clone
+```
+
+The `clone_to_box` is intended to smooth integration of cloning for other smart pointers, and does all the heavy lifting.
+
+> Note: should the current trait `T` not extend `RawClone`, the user may use the `Cast` facility described below to attempt a `Cast` to `Box<DynClass<RawClone, S>>`, clone (if the cast succeeds), and cast back to `Box<DynClass<T, S>>`.
+
+> Alternative: A more comprehensive attempt at solving DST challenges is necessary, as this new trait is insufficient to solve all challenges in itself, this is discussed in the Alternatives section.
 
 
 ## Fat Pointers/References
@@ -644,7 +661,7 @@ which illustrates the support of efficient up-casts, as the result of `<T as Tra
 Why?
 
  - `&T` does not provide direct access to fields
- - `&DynClass<T, S, CP>` does not provide access to *other* fields
+ - `&DynClass<T, S>` does not provide access to *other* fields
 
 ### `DynRef` and `DynRefMut`
 
@@ -680,9 +697,9 @@ Those references can be pointed at any existing storage, borrowing it, and allow
 Let us now how an example of a simple DOM would look like given those facilities, as it is the reference example used by the existing RFCs.
 
 ```rust
-type ClassNode = DynClass<Node, NodeData, (Clonable)>;
+type ClassNode = DynClass<Node, NodeData>;
 
-trait Node {}
+trait Node: clone::RawClone {}
 
 #[derive(Debug)]
 struct NodeData {
@@ -693,7 +710,7 @@ struct NodeData {
 impl Node for NodeData {}
 
 
-type ClassText = DynClass<Node, TextNode, (Clonable)>;
+type ClassText = DynClass<Node, TextNode>;
 
 #[derive(Debug)]
 struct TextNode: NodeData {}
@@ -701,7 +718,7 @@ struct TextNode: NodeData {}
 impl Node for TextNode {}
 
 
-type ClassElement = DynClass<Element, ElementData, (Clonable)>;
+type ClassElement = DynClass<Element, ElementData>;
 
 trait Element: Node {
     fn do_the_thing(&self);
@@ -772,14 +789,14 @@ fn process_any_element<'a>(element: &'a Element) {
 pub fn doit() {
     let text_node: Box<ClassNode> = {
         let nd = NodeData { parent: None, first_child: None };
-        Box::new(Class::new(TextNode { NodeData: nd }).into_clonable()).into().up_cast()
+        Box::new(Class::new(TextNode { NodeData: nd })).into().up_cast()
     };
 
     let video_element: Box<ClassElement> = {
         let nd = NodeData { parent: None, first_child: Some(text_node) };
         let ed = ElementData { NodeData: nd, attrs: HashMap::new() };
         let hve = HTMLVideoElement { ElementData: ed, cross_origin: false };
-        Box::new(Class::new(hve).into_clonable()).into().up_cast()
+        Box::new(Class::new(hve)).into().up_cast()
     };
 
     process_any_element((*video_element).as_trait());
@@ -941,6 +958,13 @@ This RFC proposes NOT to introduce such a type for now, as it can be added in a 
 The entire library section could be tabled, or an entirely different version of the library could be proposed, without affecting much the value of the Language & Compiler section.
 
 Notably, even without the library section, one would gain casts on existing `&T` and `&mut T` references.
+
+
+## RawClone
+
+As noted `RawClone` in itself is insufficient to solve all DST challenges. It does, however, constitutes a building brick which could be leveraged later on, and is a very small addition that is transparent to existing user code.
+
+It could be tabled for now, only cloning would be affected and it could be added back later (in this form or another).
 
 
 ## Comparison to existing RFCs
