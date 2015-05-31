@@ -689,7 +689,27 @@ pub struct DynRefMut<'a, T, S>
 }
 ```
 
-Those references can be pointed at any existing storage, borrowing it, and allow navigating the extension hierarchy of `S` safely.
+Those references can be pointed at any existing storage, borrowing it, and allow navigating the extension hierarchy of `S` safely through the implementation of the `*Cast` traits.
+
+### Conversion from existing references
+
+The `rtti::{DynRef,DynRefMut}` can be created from existing `&T` or `&mut T`:
+
+```rust
+impl<'a, T> From<&'a T> for DynRef<'a, T, ()>
+    where T: trait
+{
+    fn from(r: &'a T) -> DynRef<'a, T, ()> {
+        let trait_object = unsafe { mem::transmute(r) };
+        DynRef { v_ptr: trait_object.v_ptr, offset: 0, v_data: trait_object.data }
+    }
+}
+
+//  Similarly
+impl<'a, T> From<&'a mut T> for DynRefMut<'a, T, ()>;
+```
+
+This then allow the user to obtain handles to the struct through the existing casting facilities.
 
 
 ## Implementing the DOM according to requirements
